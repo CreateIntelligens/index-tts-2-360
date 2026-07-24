@@ -44,7 +44,7 @@ dependencies = [
   "matplotlib==3.8.2",
   "modelscope==1.27.0",
   "munch==4.0.0",
-  "numba==0.58.1",
+  "numba==0.61.2",
   "numpy==1.26.2",
   "omegaconf>=2.3.0",
   "opencv-python==4.9.0.80",
@@ -54,13 +54,13 @@ dependencies = [
   "sentencepiece>=0.2.1",
   "tensorboard==2.9.1",
   "textstat>=0.7.10",
-  "tokenizers==0.21.0",
+  "tokenizers>=0.21.1",
   "torch==2.8.*",
   "torchaudio==2.8.*",
   "tqdm>=4.67.1",
-  "transformers==4.52.1",
+  "transformers>=4.55.2,<5",
   # Use "wetext" on Windows/Mac, otherwise "WeTextProcessing" on Linux.
-  "triton-windows<3.5",
+  "triton-windows<3.5; sys_platform == 'win32'",
   "wetext>=0.0.9; sys_platform != 'linux'",
   "WeTextProcessing; sys_platform == 'linux'",
 ]
@@ -73,6 +73,9 @@ webui = [
 # To install the DeepSpeed support, use `uv sync --extra deepspeed` (or `--all-extras`).
 deepspeed = [
   "deepspeed==0.17.1",
+]
+vllm = [
+  "vllm==0.10.2",
 ]
 cu128 = [
   "torch>=2.7.1",
@@ -102,7 +105,7 @@ build-backend = "hatchling.build"
 # and finds our CUDA-enabled version of PyTorch, which DeepSpeed *needs* during
 # its compilation to determine what GPU support to compile for itself. It also
 # saves time, since it won't waste time downloading a generic PyTorch version.
-no-build-isolation-package = ["deepspeed"]
+no-build-isolation-package = ["deepspeed", "flash-attn"]
 
 [tool.uv.sources]
 # Install PyTorch with CUDA support on Linux/Windows (CUDA doesn't exist for Mac).
@@ -117,7 +120,6 @@ torchaudio = [
 torchvision = [
   { index = "pytorch-cuda", marker = "sys_platform == 'linux' or sys_platform == 'win32'", extra = "cu128" },
 ]
-flash-attn = { path = "flash_attn-2.8.3+cu128torch2.8.0cxx11abiFALSE-cp310-cp310-win_amd64.whl" }
 
 
 [[tool.uv.index]]

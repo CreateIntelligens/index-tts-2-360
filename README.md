@@ -22,6 +22,41 @@ The latest updates are done with a focus on training a multilingual model which 
 <a href="README.md" style="font-size: 24px">English</a>
 </div>
 
+## Docker Compose
+
+This repo includes a three-stage CUDA Dockerfile (`base`, `builder`, `runner`) and
+a Compose stack that routes the WebUI through nginx. The image installs the
+`cu128`, `webui`, and `vllm` extras during build. The `vllm` extra is pinned to
+the Torch 2.8-compatible vLLM release used by this project.
+
+Download the IndexTTS2 model weights into `checkpoints/` first:
+
+```bash
+uv tool install "huggingface-hub[cli,hf_xet]"
+hf download IndexTeam/IndexTTS-2 --local-dir=checkpoints
+```
+
+Then build and start the stack:
+
+```bash
+docker compose up --build
+```
+
+Open `http://127.0.0.1:7860`. The only public host port is configured in
+`.env`; start from the example file:
+
+```bash
+cp .env.example .env
+```
+
+Edit `PORT` in `.env` if you need a different public port.
+
+The Compose stack mounts:
+
+- `./checkpoints` -> `/app/checkpoints`
+- `./outputs` -> `/app/outputs`
+- `./examples` -> `/app/examples`
+
 ## 👉🏻 IndexTTS2 👈🏻
 
 <center><h3>IndexTTS2: A Breakthrough in Emotionally Expressive and Duration-Controlled Auto-Regressive Zero-Shot Text-to-Speech</h3></center>

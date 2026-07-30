@@ -30,9 +30,30 @@ from transformers.cache_utils import (
     DynamicCache,
     EncoderDecoderCache,
     OffloadedCache,
-    QuantizedCacheConfig,
     StaticCache,
 )
+
+# This module is a vendored snapshot of transformers' generation internals, so it
+# drifts as transformers evolves. The symbols below were dropped upstream but are
+# only reachable from code paths IndexTTS2 never takes (quantized KV cache and
+# assisted/speculative decoding), so we degrade to a stub that fails loudly if
+# something ever does reach them, rather than breaking import for everyone.
+def _unavailable(name: str):
+    def _raise(*args, **kwargs):
+        raise RuntimeError(
+            f"transformers.{name} is not available in transformers "
+            f"{_transformers_version}. IndexTTS2 does not use this code path."
+        )
+
+    return _raise
+
+
+from transformers import __version__ as _transformers_version  # noqa: E402
+
+try:
+    from transformers.cache_utils import QuantizedCacheConfig
+except ImportError:
+    QuantizedCacheConfig = _unavailable("cache_utils.QuantizedCacheConfig")
 from transformers.configuration_utils import PretrainedConfig
 from transformers.integrations.deepspeed import is_deepspeed_zero3_enabled
 from transformers.integrations.fsdp import is_fsdp_managed_module
@@ -55,16 +76,40 @@ from transformers.generation.candidate_generator import (
     AssistedCandidateGeneratorDifferentTokenizers,
     CandidateGenerator,
     PromptLookupCandidateGenerator,
-    _crop_past_key_values,
-    _prepare_attention_mask,
-    _prepare_token_type_ids,
 )
+
+# Private helpers removed from transformers upstream; only used by
+# `_assisted_decoding` below, which IndexTTS2 never invokes.
+try:
+    from transformers.generation.candidate_generator import _crop_past_key_values
+except ImportError:
+    _crop_past_key_values = _unavailable("generation.candidate_generator._crop_past_key_values")
+try:
+    from transformers.generation.candidate_generator import _prepare_attention_mask
+except ImportError:
+    _prepare_attention_mask = _unavailable("generation.candidate_generator._prepare_attention_mask")
+try:
+    from transformers.generation.candidate_generator import _prepare_token_type_ids
+except ImportError:
+    _prepare_token_type_ids = _unavailable("generation.candidate_generator._prepare_token_type_ids")
 from transformers.generation.configuration_utils import (
-    NEED_SETUP_CACHE_CLASSES_MAPPING,
-    QUANT_BACKEND_CLASSES_MAPPING,
     GenerationConfig,
     GenerationMode,
 )
+
+# Registries of "cache implementations that need explicit setup" and of quantized
+# cache backends. Both were dropped upstream. They are only consulted when
+# `generation_config.cache_implementation` is set, which IndexTTS2 leaves unset
+# (it runs the default dynamic cache), so empty registries reproduce the default
+# behaviour exactly: the membership tests below simply come out False.
+try:
+    from transformers.generation.configuration_utils import NEED_SETUP_CACHE_CLASSES_MAPPING
+except ImportError:
+    NEED_SETUP_CACHE_CLASSES_MAPPING = {}
+try:
+    from transformers.generation.configuration_utils import QUANT_BACKEND_CLASSES_MAPPING
+except ImportError:
+    QUANT_BACKEND_CLASSES_MAPPING = {}
 from transformers.generation.logits_process import (
     EncoderNoRepeatNGramLogitsProcessor,
     EncoderRepetitionPenaltyLogitsProcessor,

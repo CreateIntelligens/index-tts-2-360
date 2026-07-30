@@ -94,6 +94,29 @@ def parse_args() -> argparse.Namespace:
         help="Probability of zeroing duration embeddings when --use-duration-control is enabled.",
     )
     parser.add_argument(
+        "--emotion-dropout",
+        type=float,
+        default=0.0,
+        help=(
+            "Probability of zeroing the emotion vector during training. The vector is "
+            "added to the speaker latent and (with --emotion-source target) comes from "
+            "the same speaker as the prompt, so identity and emotion stay entangled and "
+            "changing the emotion at inference also changes the timbre. Zeroing it on "
+            "some steps leaves the conditioning latent as the only identity cue. Try 0.2."
+        ),
+    )
+    parser.add_argument(
+        "--emotion-shuffle",
+        type=float,
+        default=0.0,
+        help=(
+            "Probability of swapping in another sample's emotion vector. Decorrelates "
+            "identity harder than dropout, but the vector then disagrees with the "
+            "target's prosody, which is what made the first run ignore emotion entirely. "
+            "Off by default."
+        ),
+    )
+    parser.add_argument(
         "--emotion-source",
         choices=("target", "prompt"),
         default="target",
@@ -653,11 +676,31 @@ class TrainStep(nn.Module):
         code_lengths: torch.Tensor,
         use_duration_control: bool = False,
         duration_dropout: float = 0.3,
+        emotion_dropout: float = 0.0,
+        emotion_shuffle: float = 0.0,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         model = self.model
         device = text_ids.device
         batch_size = text_ids.size(0)
         use_speed = torch.zeros(batch_size, dtype=torch.long, device=device)
+
+        # The emotion vector is *added* to the speaker latent (`condition + emo_vec`),
+        # and with --emotion-source target it comes from the target clip — the same
+        # speaker as the prompt. Speaker identity therefore arrives twice, so nothing
+        # forces the model to keep the two roles apart, and at inference a changed
+        # emotion vector drags the timbre with it.
+        #
+        # Zeroing the vector on a fraction of samples leaves `condition` as the only
+        # identity cue on those steps, while the remainder still teach
+        # emotion -> prosody. Shuffling instead substitutes another sample's vector,
+        # which decorrelates harder but also makes the vector inconsistent with the
+        # target's prosody, so it is off by default.
+        if emotion_shuffle > 0.0 and batch_size > 1:
+            swap = torch.rand(batch_size, device=device) < emotion_shuffle
+            emo_vec = torch.where(swap.unsqueeze(1), emo_vec.roll(1, dims=0), emo_vec)
+        if emotion_dropout > 0.0:
+            drop = torch.rand(batch_size, device=device) < emotion_dropout
+            emo_vec = torch.where(drop.unsqueeze(1), torch.zeros_like(emo_vec), emo_vec)
 
         text_inputs = model.set_text_padding(text_ids.clone(), text_lengths)
         text_inputs = F.pad(text_inputs, (0, 1), value=model.stop_text_token)
@@ -725,6 +768,8 @@ def compute_losses(
     device: torch.device,
     use_duration_control: bool = False,
     duration_dropout: float = 0.3,
+    emotion_dropout: float = 0.0,
+    emotion_shuffle: float = 0.0,
 ) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, float]]:
     condition = batch["condition"].to(device, non_blocking=True)
     text_ids = batch["text_ids"].to(device, non_blocking=True)
@@ -742,6 +787,8 @@ def compute_losses(
         code_lengths,
         use_duration_control,
         duration_dropout,
+        emotion_dropout,
+        emotion_shuffle,
     )
     return text_loss, mel_loss, {"mel_top1": float(top1.item())}
 
@@ -783,6 +830,8 @@ def evaluate(
     duration_dropout: float = 0.3,
     dist_ctx: Optional[DistContext] = None,
 ) -> Dict[str, float]:
+    # Emotion dropout/shuffle are training-time augmentations only; validation runs
+    # with the vector intact so the metric stays comparable across runs.
     model.eval()
     totals = {"text_loss": 0.0, "mel_loss": 0.0, "mel_top1": 0.0}
     count = 0
@@ -1044,6 +1093,8 @@ def main() -> None:
                     device,
                     use_duration_control=args.use_duration_control,
                     duration_dropout=args.duration_dropout,
+                    emotion_dropout=args.emotion_dropout,
+                    emotion_shuffle=args.emotion_shuffle,
                 )
                 loss = args.text_loss_weight * text_loss + args.mel_loss_weight * mel_loss
             if use_amp:

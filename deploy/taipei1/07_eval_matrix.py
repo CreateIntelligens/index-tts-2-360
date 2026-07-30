@@ -29,6 +29,14 @@ REFS = Path(os.environ.get("REFS_DIR", ROOT / "refs"))
 OUT = Path(os.environ.get("OUT_DIR", ROOT / "outputs/eval"))
 PRUNED = Path(os.environ["CKPT_PRUNED"])
 
+# Each model writes into its own subdirectory, so the version is carried by the
+# path rather than by a filename suffix. Putting both models in one directory and
+# distinguishing them with __base / __tai8 meant every comparison run had to be
+# renamed by hand afterwards, which then left index.tsv pointing at files that no
+# longer existed.
+BASE_LABEL = os.environ.get("BASE_LABEL", "v0_base_stock")
+MODEL_LABEL = os.environ.get("MODEL_LABEL", PRUNED.stem)
+
 # Everything below is Mandarin orthography; the model is what turns it into
 # Taiwanese. Lengths are deliberately longer than the first round's 7-21 chars.
 VOICE_TEXT = "你不要再騙我了，我已經知道所有的事情，你到底把錢藏到哪裡去了"
@@ -79,33 +87,36 @@ def main() -> None:
         domain_ref = refs[0]
     print(f"domain-grid reference: {domain_ref.name}\n")
 
-    manifest_lines = []
+    rows = []
 
-    for tag, gpt_path in (("base", CKPT / "gpt.pth"), ("tai8", PRUNED)):
-        print(f"===== {tag} =====")
+    for label, gpt_path in ((BASE_LABEL, CKPT / "gpt.pth"), (MODEL_LABEL, PRUNED)):
+        print(f"===== {label} =====")
+        subdir = OUT / label
+        subdir.mkdir(parents=True, exist_ok=True)
         tts = load(gpt_path)
 
         # Set A: every voice, one text.
         for ref in refs:
-            out = OUT / f"voice__{ref.stem}__{tag}.wav"
+            out = subdir / f"voice__{ref.stem}.wav"
             tts.infer(spk_audio_prompt=str(ref), text=VOICE_TEXT, output_path=str(out), verbose=False)
-            manifest_lines.append(f"{out.name}\t{ref.name}\t{tag}\t{VOICE_TEXT}")
-            print(f"  {out.name}")
+            rows.append((label, out.relative_to(OUT).as_posix(), ref.name, f"voice__{ref.stem}", VOICE_TEXT))
+            print(f"  {out.relative_to(OUT)}")
 
         # Set B: one voice, several domains.
         for name, text in DOMAIN_TEXTS:
-            out = OUT / f"domain__{name}__{tag}.wav"
+            out = subdir / f"domain__{name}.wav"
             tts.infer(spk_audio_prompt=str(domain_ref), text=text, output_path=str(out), verbose=False)
-            manifest_lines.append(f"{out.name}\t{domain_ref.name}\t{tag}\t{text}")
-            print(f"  {out.name}")
+            rows.append((label, out.relative_to(OUT).as_posix(), domain_ref.name, f"domain__{name}", text))
+            print(f"  {out.relative_to(OUT)}")
 
         release(tts)
 
     index = OUT / "index.tsv"
-    index.write_text(
-        "file\treference\tmodel\ttext\n" + "\n".join(manifest_lines) + "\n", encoding="utf-8"
-    )
-    print(f"\nwrote {len(manifest_lines)} files and {index}")
+    with index.open("w", encoding="utf-8") as handle:
+        handle.write("version\tfile\treference\ttext_id\ttext\n")
+        for row in rows:
+            handle.write("\t".join(row) + "\n")
+    print(f"\nwrote {len(rows)} files and {index}")
 
 
 if __name__ == "__main__":

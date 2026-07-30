@@ -69,6 +69,15 @@ def parse_args() -> argparse.Namespace:
         help="Skip targets whose semantic code length is below this threshold.",
     )
     parser.add_argument(
+        "--min-prompt-duration",
+        type=float,
+        default=0.0,
+        help=(
+            "Prefer prompt clips at least this many seconds long (0 = no preference). "
+            "Falls back to the speaker's longest clip when none qualify."
+        ),
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=2025,
@@ -106,6 +115,11 @@ class Sample:
     def code_len(self) -> int:
         return int(self.record.get("code_len", 0))
 
+    @property
+    def duration(self) -> float:
+        value = self.record.get("duration")
+        return float(value) if value else 0.0
+
 
 def read_manifest(path: Path) -> List[Sample]:
     samples: List[Sample] = []
@@ -132,8 +146,10 @@ def build_pairs(
     min_text_len: int,
     min_code_len: int,
     max_pairs: Optional[int] = None,
+    min_prompt_duration: float = 0.0,
 ) -> List[Dict]:
     output: List[Dict] = []
+    short_prompt_fallbacks = 0
     for speaker, items in grouped.items():
         if len(items) < 2:
             continue  # cannot form prompt/target pair
@@ -150,6 +166,17 @@ def build_pairs(
                 continue
 
             random.shuffle(prompts)
+            if min_prompt_duration > 0.0:
+                # The prompt supplies the timbre/emotion conditioning, so a clip
+                # that is too short gives the model little to work with. Prefer
+                # long enough clips; if the speaker has none, fall back to their
+                # longest so we do not lose the target entirely.
+                long_enough = [s for s in prompts if s.duration >= min_prompt_duration]
+                if long_enough:
+                    prompts = long_enough
+                else:
+                    prompts = sorted(prompts, key=lambda s: s.duration, reverse=True)
+                    short_prompt_fallbacks += 1
             chosen = prompts[: min(pairs_per_target, len(prompts))]
 
             for prompt in chosen:
@@ -174,6 +201,12 @@ def build_pairs(
                 output.append(pair_record)
                 if max_pairs and len(output) >= max_pairs:
                     return output
+
+    if short_prompt_fallbacks:
+        print(
+            f"[Warn] {short_prompt_fallbacks} targets had no prompt clip reaching "
+            f"{min_prompt_duration}s; used the speaker's longest clip instead."
+        )
     return output
 
 
@@ -193,6 +226,7 @@ def main() -> None:
         min_text_len=args.min_text_len,
         min_code_len=args.min_code_len,
         max_pairs=max_pairs,
+        min_prompt_duration=args.min_prompt_duration,
     )
 
     if not pairs:

@@ -85,6 +85,15 @@ def parse_args() -> argparse.Namespace:
         help="Skip targets with semantic code length below this threshold.",
     )
     parser.add_argument(
+        "--min-prompt-duration",
+        type=float,
+        default=0.0,
+        help=(
+            "Prefer prompt clips at least this many seconds long (0 = no preference). "
+            "Falls back to the speaker's longest clip when none qualify."
+        ),
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=2025,
@@ -120,6 +129,7 @@ def generate_for_manifest(
     min_text_len: int,
     min_code_len: int,
     max_pairs: Optional[int],
+    min_prompt_duration: float = 0.0,
 ) -> int:
     samples: List[Sample] = read_manifest(manifest_path)
     if not samples:
@@ -131,6 +141,7 @@ def generate_for_manifest(
         min_text_len=min_text_len,
         min_code_len=min_code_len,
         max_pairs=max_pairs,
+        min_prompt_duration=min_prompt_duration,
     )
     if not pairs:
         raise RuntimeError(f"No valid pairs generated for {manifest_path}")
@@ -176,6 +187,7 @@ def main() -> None:
             min_text_len=args.min_text_len,
             min_code_len=args.min_code_len,
             max_pairs=max_pairs,
+            min_prompt_duration=args.min_prompt_duration,
         )
         print(f"  - Wrote {train_count} train pairs -> {train_output.name}")
 
@@ -186,6 +198,7 @@ def main() -> None:
             min_text_len=args.min_text_len,
             min_code_len=args.min_code_len,
             max_pairs=max_pairs,
+            min_prompt_duration=args.min_prompt_duration,
         )
         print(f"  - Wrote {val_count} val pairs -> {val_output.name}")
 

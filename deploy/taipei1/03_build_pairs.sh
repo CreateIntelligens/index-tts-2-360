@@ -12,15 +12,17 @@ cd "$REPO"
 PAIRS_PER_TARGET=${PAIRS_PER_TARGET:-1}
 MIN_PROMPT_DURATION=${MIN_PROMPT_DURATION:-2.5}
 
+PROCESSED=$WORK/$CORPUS/processed
+
 for ((i = 0; i < NUM_GPUS; i++)); do
     for split in train val; do
-        src="$WORK/processed/shard${i}/${split}/train_manifest.jsonl"
-        dst="$WORK/processed/shard${i}/${split}/gpt_pairs.jsonl"
+        src="$PROCESSED/shard${i}/${split}/train_manifest.jsonl"
+        dst="$PROCESSED/shard${i}/${split}/gpt_pairs.jsonl"
         if [[ ! -f "$src" ]]; then
             echo "[Skip] missing $src"
             continue
         fi
-        echo "=== shard${i}/${split} ==="
+        echo "=== ${CORPUS}/shard${i}/${split} ==="
         python tools/build_gpt_prompt_pairs.py \
             --manifest "$src" \
             --output "$dst" \
@@ -30,4 +32,4 @@ for ((i = 0; i < NUM_GPUS; i++)); do
 done
 
 echo "=== pair counts ==="
-find "$WORK/processed" -name 'gpt_pairs.jsonl' | sort | xargs wc -l
+find "$PROCESSED" -name 'gpt_pairs.jsonl' | sort | xargs wc -l

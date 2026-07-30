@@ -12,16 +12,18 @@ BUCKET_SIZE=${3:-256}
 WORKERS=${4:-4}
 
 cd "$REPO"
-mkdir -p "$WORK/processed" "$LOGS"
+SHARDS=$WORK/$CORPUS/shards
+PROCESSED=$WORK/$CORPUS/processed
+mkdir -p "$PROCESSED" "$LOGS"
 
-echo "[Info] $NUM_GPUS shards, batch=$BATCH_SIZE bucket=$BUCKET_SIZE workers=$WORKERS"
+echo "[Info] corpus=$CORPUS  $NUM_GPUS shards, batch=$BATCH_SIZE bucket=$BUCKET_SIZE workers=$WORKERS"
 nvidia-smi --query-gpu=index,name,memory.used,memory.total --format=csv
 
 pids=()
 for ((i = 0; i < NUM_GPUS; i++)); do
-    shard_dir="$WORK/shards/shard${i}"
-    out_dir="$WORK/processed/shard${i}"
-    log="$LOGS/preprocess_shard${i}.log"
+    shard_dir="$SHARDS/shard${i}"
+    out_dir="$PROCESSED/shard${i}"
+    log="$LOGS/preprocess_${CORPUS}_shard${i}.log"
 
     if [[ ! -f "$shard_dir/train_manifest.jsonl" ]]; then
         echo "[Error] missing $shard_dir/train_manifest.jsonl" >&2
@@ -57,7 +59,7 @@ for idx in "${!pids[@]}"; do
     if wait "${pids[$idx]}"; then
         echo "[Done] shard$idx"
     else
-        echo "[FAILED] shard$idx — see $LOGS/preprocess_shard${idx}.log" >&2
+        echo "[FAILED] shard$idx — see $LOGS/preprocess_${CORPUS}_shard${idx}.log" >&2
         status=1
     fi
 done
@@ -65,8 +67,8 @@ done
 echo "=== per-shard output ==="
 for ((i = 0; i < NUM_GPUS; i++)); do
     for split in train val; do
-        f="$WORK/processed/shard${i}/${split}/train_manifest.jsonl"
-        [[ -f "$f" ]] && echo "  shard${i}/${split}: $(wc -l <"$f") records"
+        f="$PROCESSED/shard${i}/${split}/train_manifest.jsonl"
+        [[ -f "$f" ]] && echo "  ${CORPUS}/shard${i}/${split}: $(wc -l <"$f") records"
     done
 done
 

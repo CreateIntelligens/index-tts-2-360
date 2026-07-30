@@ -27,22 +27,35 @@ export VAL_INTERVAL=${VAL_INTERVAL:-2000}
 export LOG_INTERVAL=${LOG_INTERVAL:-20}
 export WARMUP_STEPS=${WARMUP_STEPS:-500}
 export EXTRA_ARGS=${EXTRA_ARGS:-}
-export RUN_TAG OUTPUT_DIR
+export RUN_TAG OUTPUT_DIR CORPORA
 
 mkdir -p "$OUTPUT_DIR"
 
-# One --train-manifest / --val-manifest per shard. Shards are speaker-disjoint,
-# so the union is exactly the full corpus with no duplicated speakers.
+# One --train-manifest / --val-manifest per shard, for every corpus in CORPORA.
+# Shards are speaker-disjoint, so the union is the whole corpus with no duplicated
+# speakers. Legacy runs kept tai8 directly under $WORK, so that layout is accepted
+# as a fallback.
+CORPORA=${CORPORA:-$CORPUS}
 manifest_args=()
-for ((i = 0; i < NUM_GPUS; i++)); do
-    train_pairs="$WORK/processed/shard${i}/train/gpt_pairs.jsonl"
-    val_pairs="$WORK/processed/shard${i}/val/gpt_pairs.jsonl"
-    [[ -f "$train_pairs" ]] && manifest_args+=(--train-manifest "${train_pairs}::zh")
-    [[ -f "$val_pairs" ]] && manifest_args+=(--val-manifest "${val_pairs}::zh")
+for corpus in $CORPORA; do
+    base=$WORK/$corpus/processed
+    [[ -d "$base" ]] || base=$WORK/processed          # pre-CORPUS layout
+    found=0
+    for ((i = 0; i < NUM_GPUS; i++)); do
+        train_pairs="$base/shard${i}/train/gpt_pairs.jsonl"
+        val_pairs="$base/shard${i}/val/gpt_pairs.jsonl"
+        [[ -f "$train_pairs" ]] && { manifest_args+=(--train-manifest "${train_pairs}::zh"); found=1; }
+        [[ -f "$val_pairs" ]] && manifest_args+=(--val-manifest "${val_pairs}::zh")
+    done
+    if [[ $found -eq 0 ]]; then
+        echo "[Error] no pair manifests for corpus '$corpus' under $base — run 03_build_pairs.sh first" >&2
+        exit 1
+    fi
+    echo "[Info] corpus '$corpus' -> $base"
 done
 
 if [[ ${#manifest_args[@]} -eq 0 ]]; then
-    echo "[Error] no pair manifests found under $WORK/processed — run 03_build_pairs.sh first" >&2
+    echo "[Error] no pair manifests found at all" >&2
     exit 1
 fi
 
@@ -74,7 +87,8 @@ config = {
     "text_path": {
         "INDEXTTS_ZH_T2S": os.environ.get("INDEXTTS_ZH_T2S"),
     },
-    "data": os.environ.get("DATA_NOTE", "tai8 (dataset202607_1), speaker-sharded"),
+    "corpora": os.environ.get("CORPORA", os.environ.get("CORPUS", "tai8")),
+    "data": os.environ.get("DATA_NOTE", "dataset202607_1, speaker-sharded"),
 }
 path = os.path.join(output_dir, "run_config.json")
 os.makedirs(output_dir, exist_ok=True)

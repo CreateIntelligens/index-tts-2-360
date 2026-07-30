@@ -11,7 +11,13 @@ export WORK=$ROOT/work
 export LOGS=$ROOT/logs
 export IMAGE=$ROOT/images/indextts2-vllm.sqsh
 export DATASET=/mnt/shared/p06/dataset202607_1
-export TAI8=$DATASET/tai8/manifests/index_tts
+
+# Which corpus the stage scripts operate on. Each corpus keeps its filtered
+# manifests, shards and features under $WORK/$CORPUS/ so preparing a second one
+# cannot overwrite the first.
+export CORPUS=${CORPUS:-tai8}
+export SRC_MANIFESTS=${SRC_MANIFESTS:-$DATASET/$CORPUS/manifests/index_tts}
+export TAI8=$DATASET/tai8/manifests/index_tts   # kept for older invocations
 
 # Packages the image predates (e.g. opencc). The container filesystem is
 # read-only, so extra deps live on the shared mount and are prepended here.

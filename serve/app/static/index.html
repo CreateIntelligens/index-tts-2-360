@@ -35,8 +35,16 @@
     font:inherit; color:var(--text); background:var(--panel-2);
     border:1px solid var(--line); border-radius:8px; padding:9px 11px; width:100%; }
   textarea { min-height:120px; resize:vertical; line-height:1.6; }
-  input[type=file] { padding:7px 9px; }
   input[type=range] { padding:0; height:26px; background:transparent; border:0; }
+  /* The native file input renders an OS-styled button that ignores the rest of the
+     sheet, so it is kept off-screen (not display:none, which would drop it out of
+     the tab order) and driven by a real button instead. */
+  .filepick { display:flex; align-items:center; gap:8px; }
+  .filepick input[type=file] { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
+  .filepick .name { flex:1; min-width:0; font-size:12px; color:var(--muted);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .filepick .name.has { color:var(--text); }
+  .filepick input[type=file]:focus-visible + button { outline:2px solid var(--accent); outline-offset:1px; }
   input[type=checkbox] { width:auto; }
   select { appearance:none; }
   button { cursor:pointer; background:var(--accent); color:var(--accent-ink); border:0; font-weight:650; padding:11px 16px; }
@@ -118,9 +126,12 @@
     </div>
     <audio id="voice-preview" controls preload="none"></audio>
 
-    <label for="upload">或上傳（僅本次使用）</label>
-    <div class="inline">
-      <input type="file" id="upload" accept="audio/*" style="flex:1">
+    <label>或上傳（僅本次使用）</label>
+    <div class="filepick">
+      <input type="file" id="upload" accept="audio/*">
+      <button class="ghost sm" type="button" data-pick="upload">選擇音檔</button>
+      <span class="name" id="upload-name">未選擇檔案</span>
+      <button class="ghost sm" id="upload-clear" type="button" title="清除" style="display:none">✕</button>
       <button class="ghost sm" id="save-voice" type="button">存為常用</button>
     </div>
     <audio id="upload-preview" controls preload="none" style="display:none"></audio>
@@ -144,8 +155,14 @@
         <select id="emo-voice" style="flex:1"></select>
       </div>
       <audio id="emo-voice-preview" controls preload="none"></audio>
-      <label for="emo-upload">或上傳</label>
-      <input type="file" id="emo-upload" accept="audio/*">
+      <label>或上傳</label>
+      <div class="filepick">
+        <input type="file" id="emo-upload" accept="audio/*">
+        <button class="ghost sm" type="button" data-pick="emo-upload">選擇音檔</button>
+        <span class="name" id="emo-upload-name">未選擇檔案</span>
+        <button class="ghost sm" id="emo-upload-clear" type="button" title="清除" style="display:none">✕</button>
+      </div>
+      <audio id="emo-upload-preview" controls preload="none" style="display:none"></audio>
     </div>
 
     <div class="grp" data-mode="2">
@@ -326,16 +343,42 @@ function syncPreview(select, audio) {
 $('voice').addEventListener('change', () => syncPreview($('voice'), $('voice-preview')));
 $('emo-voice').addEventListener('change', () => syncPreview($('emo-voice'), $('emo-voice-preview')));
 
-// local preview for a not-yet-uploaded file
-function localPreview(input, audio) {
-  input.addEventListener('change', () => {
+// --- styled file pickers ---
+// The button drives the hidden input; the filename and preview follow the
+// selection, and the object URL is revoked so repeated picks do not leak blobs.
+document.querySelectorAll('button[data-pick]').forEach(btn => {
+  btn.onclick = () => $(btn.dataset.pick).click();
+});
+
+function wireFilePick(id) {
+  const input = $(id), name = $(id + '-name'), clear = $(id + '-clear'), audio = $(id + '-preview');
+  let objectUrl = null;
+  const render = () => {
     const f = input.files[0];
-    if (!f) { audio.style.display = 'none'; return; }
-    audio.src = URL.createObjectURL(f);
-    audio.style.display = '';
-  });
+    if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
+    if (f) {
+      name.textContent = f.name;
+      name.classList.add('has');
+      name.title = `${f.name} · ${(f.size / 1024 / 1024).toFixed(2)} MB`;
+      clear.style.display = '';
+      objectUrl = URL.createObjectURL(f);
+      audio.src = objectUrl;
+      audio.style.display = '';
+    } else {
+      name.textContent = '未選擇檔案';
+      name.classList.remove('has');
+      name.removeAttribute('title');
+      clear.style.display = 'none';
+      audio.removeAttribute('src');
+      audio.style.display = 'none';
+    }
+  };
+  input.addEventListener('change', render);
+  clear.onclick = () => { input.value = ''; render(); };
+  return render;
 }
-localPreview($('upload'), $('upload-preview'));
+const renderUpload = wireFilePick('upload');
+const renderEmoUpload = wireFilePick('emo-upload');
 
 $('refresh').onclick = async () => { await loadLists(); await loadStatus(); msg('已重新掃描', 'ok'); };
 
@@ -346,7 +389,7 @@ $('save-voice').onclick = async () => {
   const res = await fetch('/api/voices', { method:'POST', body });
   if (!res.ok) return msg('存檔失敗：' + (await res.text()), 'err');
   const d = await res.json();
-  $('upload').value = ''; $('upload-preview').style.display = 'none';
+  $('upload').value = ''; renderUpload();
   await loadLists();
   $('voice').value = d.saved; syncPreview($('voice'), $('voice-preview'));
   msg('已存為常用：' + d.saved, 'ok');

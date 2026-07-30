@@ -26,8 +26,21 @@ from pathlib import Path
 ROOT = Path(os.environ.get("ROOT", "/mnt/shared/p06/indextts2"))
 CKPT = Path(os.environ.get("CKPT", ROOT / "checkpoints"))
 REFS = Path(os.environ.get("REFS_DIR", ROOT / "refs"))
-OUT = Path(os.environ.get("OUT_DIR", ROOT / "outputs/eval"))
-PRUNED = Path(os.environ["CKPT_PRUNED"])
+# RUN_DIR is a version directory (see deploy/taipei1/env.sh). Samples land in
+# RUN_DIR/eval and the weights come from RUN_DIR/pruned/gpt.pth, so a listening
+# set can never be attributed to the wrong version. CKPT_PRUNED / OUT_DIR still
+# override both for one-off comparisons.
+RUN_DIR = Path(os.environ["RUN_DIR"]) if os.environ.get("RUN_DIR") else None
+OUT = Path(
+    os.environ.get("OUT_DIR")
+    or (RUN_DIR / "eval" if RUN_DIR else ROOT / "outputs/eval")
+)
+PRUNED = Path(
+    os.environ.get("CKPT_PRUNED")
+    or (RUN_DIR / "pruned/gpt.pth" if RUN_DIR else "")
+)
+if not PRUNED.is_file():
+    raise SystemExit(f"no pruned checkpoint at {PRUNED}; run 05_infer.sh first or set CKPT_PRUNED")
 
 # Each model writes into its own subdirectory, so the version is carried by the
 # path rather than by a filename suffix. Putting both models in one directory and
@@ -35,7 +48,7 @@ PRUNED = Path(os.environ["CKPT_PRUNED"])
 # renamed by hand afterwards, which then left index.tsv pointing at files that no
 # longer existed.
 BASE_LABEL = os.environ.get("BASE_LABEL", "v0_base_stock")
-MODEL_LABEL = os.environ.get("MODEL_LABEL", PRUNED.stem)
+MODEL_LABEL = os.environ.get("MODEL_LABEL") or (RUN_DIR.name if RUN_DIR else PRUNED.stem)
 
 # Everything below is Mandarin orthography; the model is what turns it into
 # Taiwanese. Lengths are deliberately longer than the first round's 7-21 chars.

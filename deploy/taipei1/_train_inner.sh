@@ -8,12 +8,13 @@ source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
 cd "$REPO"
 
-# Each run gets its own timestamped directory so versions never overwrite each
-# other. Pass OUTPUT_DIR explicitly to resume an existing run (--resume auto
-# looks for latest.pth *inside* OUTPUT_DIR, so a fresh timestamp starts over).
-RUN_TAG=${RUN_TAG:-tai8}
+# Each version gets its own directory, <version>_<timestamp> directly under
+# $ROOT, so versions never overwrite each other and the label is readable at a
+# glance. Pass OUTPUT_DIR explicitly to resume an existing run: --resume auto
+# looks for latest.pth *inside* OUTPUT_DIR, so a fresh timestamp starts over.
+VERSION=${VERSION:-${RUN_TAG:-v0}}
 if [[ -z "${OUTPUT_DIR:-}" ]]; then
-    OUTPUT_DIR=$ROOT/runs/$(date +%Y%m%d_%H%M%S)__${RUN_TAG}
+    OUTPUT_DIR=$ROOT/${VERSION}_$(date +%Y%m%d_%H%M%S)
 fi
 # Exported so run_config.json records the values actually used, including the
 # defaults that were never passed in.
@@ -27,7 +28,7 @@ export VAL_INTERVAL=${VAL_INTERVAL:-2000}
 export LOG_INTERVAL=${LOG_INTERVAL:-20}
 export WARMUP_STEPS=${WARMUP_STEPS:-500}
 export EXTRA_ARGS=${EXTRA_ARGS:-}
-export RUN_TAG OUTPUT_DIR CORPORA
+export VERSION OUTPUT_DIR CORPORA
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -64,18 +65,19 @@ echo "[Info] OUTPUT_DIR=$OUTPUT_DIR"
 nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv
 
 # Record what produced this run, so a directory is self-describing months later.
-python - "$OUTPUT_DIR" "$RUN_TAG" <<'PY'
+python - "$OUTPUT_DIR" "$VERSION" <<'PY'
 import json
 import os
 import sys
 from datetime import datetime
 
-output_dir, run_tag = sys.argv[1], sys.argv[2]
+output_dir, version = sys.argv[1], sys.argv[2]
 config = {
-    "run_tag": run_tag,
+    "version": version,
     "started": datetime.now().isoformat(timespec="seconds"),
     "repo_commit": os.environ.get("GIT_COMMIT", "unknown"),
     "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
+    "slurm_log": os.environ.get("SLURM_LOG"),
     "num_gpus": int(os.environ.get("NUM_GPUS", "1")),
     "hyperparams": {
         key: os.environ.get(key)

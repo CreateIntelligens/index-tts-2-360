@@ -8,7 +8,9 @@
 #
 # Stage 4: DDP finetuning. One torchrun process per GPU on a single node.
 #
-#   NUM_GPUS=4 sbatch --gres=gpu:h100:4 deploy/taipei1/04_train.sbatch
+#   VERSION=v3b NUM_GPUS=4 sbatch --gres=gpu:h100:4 deploy/taipei1/04_train.sbatch
+#
+# VERSION names the output directory: $ROOT/<VERSION>_<YYYYmmdd_HHMMSS>.
 #
 # The GPU count is not baked in anywhere: change --gres and NUM_GPUS together.
 # Submitted via sbatch so the run outlives the SSH session and the 48h cert.
@@ -16,6 +18,8 @@
 set -euo pipefail
 
 ROOT=/mnt/shared/p06/indextts2
+
+export SLURM_LOG=/mnt/shared/p06/indextts2/logs/train_${SLURM_JOB_ID}.out
 
 srun --ntasks=1 \
     --container-image "$ROOT/images/indextts2-vllm.sqsh" \

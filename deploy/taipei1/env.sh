@@ -35,6 +35,65 @@ export INDEXTTS_USE_DEEPSPEED=0
 # Traditional-Chinese corpus: keep training and inference on the same text path.
 export INDEXTTS_ZH_T2S=1
 
+# One directory per trained version, directly under $ROOT and named
+# <version>_<YYYYmmdd_HHMMSS>, e.g. v3a_20260730_154608. Everything about that
+# version lives inside it, so no artefact is ever ambiguous about which model
+# produced it:
+#
+#   v3a_20260730_154608/
+#     run_config.json   what produced it (settings, commit, job id, corpora)
+#     model_step*.pth   training checkpoints (optimiser state included)
+#     latest.pth        resume point
+#     logs/             TensorBoard events
+#     train.log         the Slurm job log
+#     pruned/gpt.pth    inference weights, optimiser state stripped
+#     eval/             generated samples + index.tsv
+#
+# The version label comes first so the directories read in release order at a
+# glance; the timestamp keeps same-day runs distinct.
+export VERSION_GLOB='v*_2*'
+
+list_runs_paths() {
+    ls -d "$ROOT"/$VERSION_GLOB/ 2>/dev/null | sed 's:/*$::'
+}
+
+# Newest by timestamp, which is the trailing part of the name.
+latest_run() {
+    list_runs_paths | awk -F/ '{n=$NF; sub(/^v[^_]*_/, "", n); print n"\t"$0}' |
+        sort | tail -1 | cut -f2-
+}
+
+# Accept a full path, a directory name, a unique substring, or "latest".
+resolve_run() {
+    local want=${1:-latest}
+    if [[ "$want" == latest ]]; then
+        latest_run
+        return
+    fi
+    if [[ -d "$want" ]]; then
+        echo "${want%/}"
+        return
+    fi
+    if [[ -d "$ROOT/$want" ]]; then
+        echo "$ROOT/$want"
+        return
+    fi
+    local matches count
+    matches=$(list_runs_paths | grep -- "$want" || true)
+    count=$(printf '%s\n' "$matches" | grep -c . || true)
+    if [[ "$count" -eq 1 ]]; then
+        printf '%s\n' "$matches"
+        return
+    fi
+    if [[ "$count" -eq 0 ]]; then
+        echo "[Error] no version matching '$want' under $ROOT" >&2
+    else
+        echo "[Error] '$want' matches $count versions:" >&2
+        printf '  %s\n' $matches >&2
+    fi
+    return 1
+}
+
 export SLURM_PARTITION=${SLURM_PARTITION:-p06}
 # How many GPUs to use. Nothing downstream hard-codes this.
 export NUM_GPUS=${NUM_GPUS:-4}

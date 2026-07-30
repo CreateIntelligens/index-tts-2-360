@@ -8,17 +8,26 @@ source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
 cd "$REPO"
 
-OUTPUT_DIR=${OUTPUT_DIR:-$ROOT/runs/tai8_v1}
-BATCH_SIZE=${BATCH_SIZE:-8}
-GRAD_ACCUM=${GRAD_ACCUM:-1}
-EPOCHS=${EPOCHS:-2}
-LR=${LR:-1e-5}
-MAX_STEPS=${MAX_STEPS:-0}
-NUM_WORKERS=${NUM_WORKERS:-4}
-VAL_INTERVAL=${VAL_INTERVAL:-2000}
-LOG_INTERVAL=${LOG_INTERVAL:-20}
-WARMUP_STEPS=${WARMUP_STEPS:-500}
-EXTRA_ARGS=${EXTRA_ARGS:-}
+# Each run gets its own timestamped directory so versions never overwrite each
+# other. Pass OUTPUT_DIR explicitly to resume an existing run (--resume auto
+# looks for latest.pth *inside* OUTPUT_DIR, so a fresh timestamp starts over).
+RUN_TAG=${RUN_TAG:-tai8}
+if [[ -z "${OUTPUT_DIR:-}" ]]; then
+    OUTPUT_DIR=$ROOT/runs/$(date +%Y%m%d_%H%M%S)__${RUN_TAG}
+fi
+# Exported so run_config.json records the values actually used, including the
+# defaults that were never passed in.
+export BATCH_SIZE=${BATCH_SIZE:-8}
+export GRAD_ACCUM=${GRAD_ACCUM:-1}
+export EPOCHS=${EPOCHS:-2}
+export LR=${LR:-1e-5}
+export MAX_STEPS=${MAX_STEPS:-0}
+export NUM_WORKERS=${NUM_WORKERS:-4}
+export VAL_INTERVAL=${VAL_INTERVAL:-2000}
+export LOG_INTERVAL=${LOG_INTERVAL:-20}
+export WARMUP_STEPS=${WARMUP_STEPS:-500}
+export EXTRA_ARGS=${EXTRA_ARGS:-}
+export RUN_TAG OUTPUT_DIR
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -38,7 +47,41 @@ if [[ ${#manifest_args[@]} -eq 0 ]]; then
 fi
 
 echo "[Info] NUM_GPUS=$NUM_GPUS batch=$BATCH_SIZE accum=$GRAD_ACCUM"
+echo "[Info] OUTPUT_DIR=$OUTPUT_DIR"
 nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv
+
+# Record what produced this run, so a directory is self-describing months later.
+python - "$OUTPUT_DIR" "$RUN_TAG" <<'PY'
+import json
+import os
+import sys
+from datetime import datetime
+
+output_dir, run_tag = sys.argv[1], sys.argv[2]
+config = {
+    "run_tag": run_tag,
+    "started": datetime.now().isoformat(timespec="seconds"),
+    "repo_commit": os.environ.get("GIT_COMMIT", "unknown"),
+    "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
+    "num_gpus": int(os.environ.get("NUM_GPUS", "1")),
+    "hyperparams": {
+        key: os.environ.get(key)
+        for key in (
+            "BATCH_SIZE", "GRAD_ACCUM", "EPOCHS", "LR", "MAX_STEPS",
+            "WARMUP_STEPS", "VAL_INTERVAL", "NUM_WORKERS", "EXTRA_ARGS",
+        )
+    },
+    "text_path": {
+        "INDEXTTS_ZH_T2S": os.environ.get("INDEXTTS_ZH_T2S"),
+    },
+    "data": os.environ.get("DATA_NOTE", "tai8 (dataset202607_1), speaker-sharded"),
+}
+path = os.path.join(output_dir, "run_config.json")
+os.makedirs(output_dir, exist_ok=True)
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(config, handle, ensure_ascii=False, indent=2)
+print(f"[Info] wrote {path}")
+PY
 
 torchrun --standalone --nnodes=1 --nproc_per_node="$NUM_GPUS" \
     trainers/train_gpt_v2.py \

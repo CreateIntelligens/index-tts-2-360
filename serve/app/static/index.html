@@ -77,6 +77,8 @@
   .result { background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:11px 13px; }
   .result .meta { font-size:11.5px; color:var(--muted); display:flex; gap:7px; flex-wrap:wrap; margin-bottom:7px; }
   .result .meta .tag { background:var(--panel); border:1px solid var(--line); border-radius:5px; padding:1px 7px; }
+  .result .meta .tag.seed { cursor:pointer; border-color:color-mix(in srgb,var(--accent) 45%,var(--line)); color:var(--accent); }
+  .result .meta .tag.seed:hover { background:color-mix(in srgb,var(--accent) 15%,transparent); }
   .result .txt { font-size:13px; margin-bottom:6px; word-break:break-word; }
 </style>
 </head>
@@ -189,7 +191,14 @@
         <div><label for="interval_silence">句間靜音 (ms)</label><input id="interval_silence" type="number" step="50" min="0" max="2000" value="200"></div>
       </div>
       <div class="row">
-        <div><label for="seed">seed（留空=隨機）</label><input id="seed" type="number" step="1" placeholder=""></div>
+        <div>
+          <label for="seed">seed（留空=隨機抽一個）</label>
+          <div class="inline">
+            <input id="seed" type="number" step="1" placeholder="留空" style="flex:1">
+            <button class="ghost sm" id="clear-seed" type="button" title="清空，下次隨機">✕</button>
+          </div>
+          <div class="hint">留空也會回報實際使用的 seed；點結果上的 seed 標籤可帶回來重現。</div>
+        </div>
         <div><label for="duration_seconds">目標長度（秒，留空=不指定）</label><input id="duration_seconds" type="number" step="0.5" min="0" placeholder=""></div>
       </div>
       <div class="warn">
@@ -257,6 +266,8 @@ $('emo-tabs').addEventListener('click', e => {
   document.querySelectorAll('#emo-tabs button').forEach(b => b.classList.toggle('on', b === btn));
   document.querySelectorAll('.grp[data-mode]').forEach(g => g.classList.toggle('on', +g.dataset.mode === emoMode));
 });
+
+$('clear-seed').onclick = () => { $('seed').value = ''; msg('seed 已清空，下次隨機', 'ok'); };
 
 $('reset-params').onclick = () => {
   for (const [k, v] of Object.entries(DEFAULTS)) {
@@ -409,6 +420,21 @@ function addResult(text, d) {
   if (d.emo_reference) tags.splice(3, 0, ['情感參考', d.emo_reference]);
   for (const [k, v] of tags) {
     const s = document.createElement('span'); s.className = 'tag'; s.textContent = `${k}: ${v}`;
+    meta.appendChild(s);
+  }
+  // The seed is always reported, even when the request left it blank, and clicking
+  // it pins that seed for the next run so a result can be reproduced or varied
+  // one parameter at a time.
+  if (d.seed !== undefined && d.seed !== null) {
+    const s = document.createElement('span');
+    s.className = 'tag seed';
+    s.textContent = `seed: ${d.seed} ⤒`;
+    s.title = '點擊帶入上方的 seed 欄位';
+    s.onclick = () => {
+      $('seed').value = d.seed;
+      $('seed').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      msg(`已帶入 seed ${d.seed}`, 'ok');
+    };
     meta.appendChild(s);
   }
   const txt = document.createElement('div'); txt.className = 'txt'; txt.textContent = text;

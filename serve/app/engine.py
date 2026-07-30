@@ -11,6 +11,7 @@ from __future__ import annotations
 import gc
 import logging
 import os
+import random
 import threading
 import time
 import uuid
@@ -268,20 +269,24 @@ class TTSEngine:
                 "emo_alpha": emo_alpha,
             }
 
+        # Draw a seed when the caller did not pin one, then always apply it. Every
+        # result is therefore reproducible and can report the seed it used, instead
+        # of an unseeded run being impossible to repeat.
+        if seed is None:
+            seed = random.randrange(1, 2**31 - 1)
+        seed = int(seed)
+
         with self._lock:  # one GPU: queue requests rather than interleave them
             tts = self.ensure(model_id, tokenizer_id)
 
-            if seed is not None:
-                import random
+            import numpy as np
+            import torch
 
-                import numpy as np
-                import torch
-
-                random.seed(seed)
-                np.random.seed(seed)
-                torch.manual_seed(seed)
-                if torch.cuda.is_available():
-                    torch.cuda.manual_seed_all(seed)
+            random.seed(seed)
+            np.random.seed(seed % (2**32))
+            torch.manual_seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
 
             out_path = OUTPUTS_DIR / f"tts_{int(time.time())}_{uuid.uuid4().hex[:8]}.wav"
             started = time.time()
@@ -323,6 +328,7 @@ class TTSEngine:
             "model": (self._loaded or ("?", "?"))[0],
             "tokenizer": (self._loaded or ("?", "?"))[1],
             "emo_mode": emo_mode,
+            "seed": seed,
         }
 
 

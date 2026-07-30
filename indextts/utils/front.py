@@ -14,11 +14,54 @@ class TextNormalizer:
     _KATAKANA_PATTERN = re.compile(r"[\u30a0-\u30ff\u31f0-\u31ff\uFF66-\uFF9F]")
     _JAPANESE_PUNCT = re.compile(r"[ー〜〝〞〟・]")
 
-    def __init__(self, preferred_language: str | None = None):
+    # Variant forms that neither WeTextProcessing nor OpenCC's t2s rewrites, and
+    # which are absent from the base IndexTTS2 vocab (so they become <unk>). Each
+    # maps to a same-pronunciation character that *is* in the vocab, so the
+    # substitution is lossless.
+    ZH_VARIANT_MAP = {
+        "妳": "你",
+        "姪": "侄",
+        "祂": "他",
+        "揹": "背",
+        "牠": "它",
+        "瞇": "眯",
+        "簷": "檐",
+        "搧": "扇",
+        "罣": "挂",
+        "粧": "妆",
+        "痺": "痹",
+        "吋": "寸",
+        "舖": "铺",
+        "妺": "妹",
+        "暱": "昵",
+        "俥": "车",
+    }
+
+    def __init__(self, preferred_language: str | None = None, zh_to_simplified: bool | None = None):
         self.zh_normalizer = None
         self.en_normalizer = None
         self.preferred_language = preferred_language.lower() if preferred_language else None
+        # Fold Traditional Chinese onto the Simplified vocab the base model was
+        # trained with. This must be identical during preprocessing, training and
+        # inference, so it also honours a global env switch.
+        if zh_to_simplified is None:
+            zh_to_simplified = os.environ.get("INDEXTTS_ZH_T2S", "0") != "0"
+        # NOTE: WeTextProcessing's zh normalizer already folds Traditional onto
+        # Simplified on Linux, so this is mostly a belt-and-braces switch. It
+        # exists because (a) ZH_VARIANT_MAP covers forms wetext misses and
+        # (b) the Mac/Windows `wetext` backend is a different implementation, so
+        # this guarantees identical behaviour across platforms.
+        self.zh_to_simplified = zh_to_simplified
+        self._t2s_converter = None
+        self._zh_variant_pattern = re.compile("|".join(re.escape(k) for k in self.ZH_VARIANT_MAP))
         self.char_rep_map = {
+            # Subtitle line-break markers. Multi-character keys must precede the
+            # single-character ones: the cleanup pattern is an alternation built
+            # in dict order, so a single "/" would otherwise shadow "//".
+            "//": ",",
+            "\\\\": ",",
+            "/": ",",
+            "\\": ",",
             "：": ",",
             "；": ",",
             ";": ",",
@@ -53,6 +96,8 @@ class TextNormalizer:
             "~": "-",
             "「": "'",
             "」": "'",
+            "『": "'",
+            "』": "'",
             ":": ",",
         }
         self.zh_char_rep_map = {
@@ -126,6 +171,23 @@ class TextNormalizer:
         if self.zh_normalizer is None or self.en_normalizer is None:
             self.load()
 
+    def to_simplified(self, text: str) -> str:
+        """
+        Fold Traditional Chinese onto Simplified. Variant forms that OpenCC does
+        not cover are rewritten first via ZH_VARIANT_MAP.
+
+        The base IndexTTS2 vocab has no byte fallback, so any character missing
+        from it collapses to a single <unk> rather than degrading to bytes.
+        """
+        if not text:
+            return text
+        text = self._zh_variant_pattern.sub(lambda m: self.ZH_VARIANT_MAP[m.group()], text)
+        if self._t2s_converter is None:
+            from opencc import OpenCC
+
+            self._t2s_converter = OpenCC("t2s")
+        return self._t2s_converter.convert(text)
+
     def _basic_cleanup(self, text: str) -> str:
         if not text:
             return ""
@@ -172,6 +234,9 @@ class TextNormalizer:
 
         if lang == "zh":
             self._ensure_normalizers()
+            if self.zh_to_simplified:
+                # Convert before TN: WeTextProcessing's zh rules expect Simplified.
+                text = self.to_simplified(text)
             text = re.sub(TextNormalizer.ENGLISH_CONTRACTION_PATTERN, r"\1 is", text, flags=re.IGNORECASE)
             replaced_text, pinyin_list = self.save_pinyin_tones(text.rstrip())
             replaced_text, original_name_list = self.save_names(replaced_text)

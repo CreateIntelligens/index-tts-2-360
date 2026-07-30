@@ -47,6 +47,7 @@ dependencies = [
   "numba==0.61.2",
   "numpy==1.26.2",
   "omegaconf>=2.3.0",
+  "opencc-python-reimplemented>=0.1.7",
   "opencv-python==4.9.0.80",
   "pandas==2.3.2",
   "pypdf2>=3.0.1",

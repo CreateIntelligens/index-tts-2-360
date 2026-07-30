@@ -140,6 +140,27 @@ def parse_args() -> argparse.Namespace:
         help="Language hint passed to the TextNormalizer/TextTokenizer.",
     )
     parser.add_argument(
+        "--bucket-size",
+        type=int,
+        default=256,
+        help=(
+            "Number of batches to buffer and sort by duration before encoding, so each "
+            "batch holds similar-length clips. Padding perturbs the w2v-BERT features of "
+            "neighbouring real frames, so less padding means more faithful semantic codes. "
+            "0 disables bucketing (process in manifest order)."
+        ),
+    )
+    parser.add_argument(
+        "--zh-to-simplified",
+        action="store_true",
+        help=(
+            "Explicitly fold Traditional Chinese onto Simplified before tokenizing. "
+            "WeTextProcessing already does most of this on Linux; this also applies "
+            "TextNormalizer.ZH_VARIANT_MAP and makes the behaviour identical across "
+            "platforms. Inference must use the same setting (INDEXTTS_ZH_T2S=1)."
+        ),
+    )
+    parser.add_argument(
         "--device",
         default="cuda",
         help="Computation device (cuda or cpu).",
@@ -400,6 +421,11 @@ def process_batch(
             semantic_code = semantic_code.unsqueeze(0)
         semantic_code = semantic_code.detach().cpu().numpy().astype(np.int32)
         cond_lengths = attention_mask.sum(dim=1).long()
+        # `extract()` pads the batch to its longest clip, so the quantizer also
+        # emits codes for the padded frames. Saving those would teach the model
+        # to keep generating after the utterance ends, so keep only the frames
+        # the attention mask marks as real.
+        code_lengths = cond_lengths.detach().cpu().numpy()
         feat_t = feat.transpose(1, 2)
         cond_lengths_device = cond_lengths.to(feat.device)
         conditioning = gpt.get_conditioning(feat_t, cond_lengths_device)
@@ -418,7 +444,9 @@ def process_batch(
         emo_path = dirs["emo"] / f"{uid}.npy"
         text_path = dirs["text"] / f"{uid}.npy"
 
-        save_numpy(code_path, semantic_code[idx])
+        codes = semantic_code[idx][: int(code_lengths[idx])]
+
+        save_numpy(code_path, codes)
         save_numpy(cond_path, conditioning_np[idx])
         save_numpy(emo_path, emo_vec_np[idx])
         save_numpy(text_path, item["text_ids"])
@@ -433,7 +461,7 @@ def process_batch(
             "text_ids_path": text_path.relative_to(output_root).as_posix(),
             "text_len": int(item["text_ids"].size),
             "codes_path": code_path.relative_to(output_root).as_posix(),
-            "code_len": int(semantic_code[idx].size),
+            "code_len": int(codes.size),
             "condition_path": cond_path.relative_to(output_root).as_posix(),
             "condition_len": int(conditioning_np[idx].shape[0]),
             "emo_vec_path": emo_path.relative_to(output_root).as_posix(),
@@ -500,7 +528,10 @@ def preprocess_dataset(
 
     tokenizer = TextTokenizer(
         str(tokenizer_path),
-        TextNormalizer(preferred_language=normalizer_hint),
+        TextNormalizer(
+            preferred_language=normalizer_hint,
+            zh_to_simplified=getattr(args, "zh_to_simplified", False) or None,
+        ),
     )
 
     train_manifest_path = output_dir / "train_manifest.jsonl"
@@ -526,8 +557,16 @@ def preprocess_dataset(
         )
     )
 
+    bucket_pool = batch_size * args.bucket_size if args.bucket_size else 0
+
     def flush(force: bool = False) -> None:
         nonlocal pending, processed, skipped
+        if bucket_pool:
+            # Wait for a full pool, then sort it so each batch gets clips of
+            # similar length. Anything left over stays for the next pool.
+            if not force and len(pending) < bucket_pool:
+                return
+            pending.sort(key=lambda record: float(record.get("duration") or 0.0))
         while pending and (
             force
             or len(pending) >= batch_size

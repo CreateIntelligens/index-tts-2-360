@@ -30,10 +30,12 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn.functional as F
 from torch import nn
+from torch.nn.parallel import DistributedDataParallel
 from torch.optim import AdamW
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, DistributedSampler
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn.utils.rnn import pad_sequence
 from transformers import get_cosine_schedule_with_warmup
@@ -92,6 +94,69 @@ def parse_args() -> argparse.Namespace:
         help="Probability of zeroing duration embeddings when --use-duration-control is enabled.",
     )
     parser.add_argument("--seed", type=int, default=1234, help="Random seed.")
+    parser.add_argument(
+        "--ddp-backend",
+        type=str,
+        default="nccl",
+        help="torch.distributed backend for multi-GPU runs (falls back to gloo without CUDA).",
+    )
+    parser.add_argument(
+        "--ddp-find-unused-parameters",
+        dest="ddp_find_unused_parameters",
+        action="store_true",
+        default=True,
+        help=(
+            "Default on: the loss only touches part of UnifiedVoice (the conditioning "
+            "and emotion encoders are bypassed because those features are precomputed), "
+            "so DDP would otherwise abort on unreduced parameters."
+        ),
+    )
+    parser.add_argument(
+        "--no-ddp-find-unused-parameters",
+        dest="ddp_find_unused_parameters",
+        action="store_false",
+        help="Faster, but only safe if every parameter receives a gradient.",
+    )
+    parser.add_argument(
+        "--ddp-static-graph",
+        dest="ddp_static_graph",
+        action="store_true",
+        default=True,
+        help=(
+            "Default on. UnifiedVoice runs the GPT stack under gradient checkpointing, "
+            "whose reentrant backward marks each parameter ready twice; DDP's default "
+            "reducer rejects that. A static graph is the supported way to combine the "
+            "two, and this model's graph really is the same every step."
+        ),
+    )
+    parser.add_argument(
+        "--no-ddp-static-graph",
+        dest="ddp_static_graph",
+        action="store_false",
+        help="Disable the static-graph optimisation (needs --no-gradient-checkpointing).",
+    )
+    parser.add_argument(
+        "--gradient-checkpointing",
+        dest="gradient_checkpointing",
+        action="store_true",
+        default=None,
+        help="Force gradient checkpointing on (default: whatever the model config says).",
+    )
+    parser.add_argument(
+        "--no-gradient-checkpointing",
+        dest="gradient_checkpointing",
+        action="store_false",
+        help="Trade memory for speed; comfortable on 80GB cards.",
+    )
+    parser.add_argument(
+        "--freeze-unused-modules",
+        action="store_true",
+        help=(
+            "Set requires_grad=False on the conditioning/emotion encoders that the "
+            "precomputed-feature training path never uses. Lets you drop "
+            "--ddp-find-unused-parameters for extra speed."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -124,6 +189,69 @@ def set_seed(seed: int) -> None:
     np.random.seed(seed)
 
     random.seed(seed)
+
+
+@dataclass
+class DistContext:
+    """
+    Describes this process's place in the job. `world_size == 1` covers both the
+    plain single-GPU run and the CPU fallback, so the training code below never
+    needs to branch on "are we distributed".
+    """
+
+    rank: int = 0
+    local_rank: int = 0
+    world_size: int = 1
+    enabled: bool = False
+
+    @property
+    def is_main(self) -> bool:
+        return self.rank == 0
+
+    def barrier(self) -> None:
+        if self.enabled:
+            dist.barrier()
+
+
+def init_distributed(backend: str) -> DistContext:
+    """
+    Pick up the rank/world-size the launcher exported. Supports `torchrun`
+    (RANK/WORLD_SIZE/LOCAL_RANK) and Slurm's `srun` (SLURM_PROCID/SLURM_NTASKS/
+    SLURM_LOCALID). The GPU count is never hard-coded: whatever the launcher asks
+    for is what we use.
+    """
+    if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
+        rank = int(os.environ["RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
+        local_rank = int(os.environ.get("LOCAL_RANK", rank % max(1, torch.cuda.device_count())))
+    elif "SLURM_PROCID" in os.environ and int(os.environ.get("SLURM_NTASKS", "1")) > 1:
+        rank = int(os.environ["SLURM_PROCID"])
+        world_size = int(os.environ["SLURM_NTASKS"])
+        local_rank = int(os.environ.get("SLURM_LOCALID", rank % max(1, torch.cuda.device_count())))
+        os.environ.setdefault("MASTER_ADDR", os.environ.get("SLURM_LAUNCH_NODE_IPADDR", "127.0.0.1"))
+        os.environ.setdefault("MASTER_PORT", "29500")
+    else:
+        return DistContext()
+
+    if world_size <= 1:
+        return DistContext()
+
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
+    else:
+        backend = "gloo"
+
+    dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
+    return DistContext(rank=rank, local_rank=local_rank, world_size=world_size, enabled=True)
+
+
+def unwrap_model(module: nn.Module) -> "UnifiedVoice":
+    """Peel off DistributedDataParallel / TrainStep to reach the raw UnifiedVoice."""
+    if isinstance(module, DistributedDataParallel):
+        module = module.module
+    if isinstance(module, TrainStep):
+        module = module.model
+    return module
 
 
 @dataclass
@@ -416,11 +544,19 @@ def load_tokenizer(tokenizer_path: Path) -> TextTokenizer:
     return tokenizer
 
 
-def build_model(cfg_path: Path, tokenizer: TextTokenizer, base_checkpoint: Path, device: torch.device) -> UnifiedVoice:
+def build_model(
+    cfg_path: Path,
+    tokenizer: TextTokenizer,
+    base_checkpoint: Path,
+    device: torch.device,
+    gradient_checkpointing: Optional[bool] = None,
+) -> UnifiedVoice:
     cfg = OmegaConf.load(cfg_path)
     vocab_size = tokenizer.vocab_size
     if cfg.gpt.number_text_tokens != vocab_size:
         cfg.gpt.number_text_tokens = vocab_size
+    if gradient_checkpointing is not None:
+        cfg.gpt.checkpointing = gradient_checkpointing
 
     model = UnifiedVoice(**cfg.gpt)
     checkpoint = torch.load(base_checkpoint, map_location="cpu")
@@ -464,83 +600,122 @@ def build_model(cfg_path: Path, tokenizer: TextTokenizer, base_checkpoint: Path,
     return model.to(device)
 
 
+class TrainStep(nn.Module):
+    """
+    Runs the loss computation inside `forward()`.
+
+    This exists for DistributedDataParallel: DDP arms its gradient-reduction hooks
+    when its own `forward()` is called. The loss here is built from
+    `UnifiedVoice.get_logits()` rather than `UnifiedVoice.forward()`, so calling the
+    model directly under DDP would silently skip gradient synchronisation and every
+    rank would drift apart. Wrapping the computation keeps DDP in the loop.
+    """
+
+    def __init__(self, model: UnifiedVoice):
+        super().__init__()
+        self.model = model
+
+    def forward(
+        self,
+        condition: torch.Tensor,
+        text_ids: torch.Tensor,
+        codes: torch.Tensor,
+        emo_vec: torch.Tensor,
+        text_lengths: torch.Tensor,
+        code_lengths: torch.Tensor,
+        use_duration_control: bool = False,
+        duration_dropout: float = 0.3,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        model = self.model
+        device = text_ids.device
+        batch_size = text_ids.size(0)
+        use_speed = torch.zeros(batch_size, dtype=torch.long, device=device)
+
+        text_inputs = model.set_text_padding(text_ids.clone(), text_lengths)
+        text_inputs = F.pad(text_inputs, (0, 1), value=model.stop_text_token)
+        text_inputs, text_targets = model.build_aligned_inputs_and_targets(
+            text_inputs, model.start_text_token, model.stop_text_token
+        )
+
+        mel_inputs = model.set_mel_padding(codes.clone(), code_lengths)
+        mel_inputs = F.pad(mel_inputs, (0, 1), value=model.stop_mel_token)
+        mel_inputs, mel_targets = model.build_aligned_inputs_and_targets(
+            mel_inputs, model.start_mel_token, model.stop_mel_token
+        )
+
+        duration_free = model.speed_emb(torch.zeros_like(use_speed))
+        if use_duration_control:
+            duration_ctrl = model.get_duration_embeddings(code_lengths)
+            if duration_dropout > 0.0:
+                drop_mask = torch.rand(code_lengths.size(0), device=device) < duration_dropout
+                if drop_mask.any():
+                    duration_ctrl = torch.where(drop_mask.unsqueeze(1), duration_free, duration_ctrl)
+        else:
+            duration_ctrl = model.speed_emb(torch.ones_like(use_speed))
+        conds = torch.cat(
+            (condition + emo_vec.unsqueeze(1), duration_ctrl.unsqueeze(1), duration_free.unsqueeze(1)),
+            dim=1,
+        )
+
+        text_emb = model.text_embedding(text_inputs) + model.text_pos_embedding(text_inputs)
+        mel_emb = model.mel_embedding(mel_inputs) + model.mel_pos_embedding(mel_inputs)
+
+        text_logits, mel_logits = model.get_logits(conds, text_emb, model.text_head, mel_emb, model.mel_head)
+
+        text_mask = (
+            torch.arange(text_targets.size(1), device=device).unsqueeze(0)
+            < (text_lengths + 1).unsqueeze(1)
+        )
+        mel_mask = (
+            torch.arange(mel_targets.size(1), device=device).unsqueeze(0)
+            < (code_lengths + 1).unsqueeze(1)
+        )
+
+        text_ce = F.cross_entropy(text_logits, text_targets, reduction="none")
+        mel_ce = F.cross_entropy(mel_logits, mel_targets, reduction="none")
+
+        text_loss = (text_ce * text_mask).sum() / text_mask.sum().clamp_min(1)
+        mel_loss = (mel_ce * mel_mask).sum() / mel_mask.sum().clamp_min(1)
+
+        with torch.no_grad():
+            mel_logits_flat = mel_logits.permute(0, 2, 1).reshape(-1, mel_logits.size(1))
+            mel_targets_flat = mel_targets.reshape(-1)
+            mel_mask_flat = mel_mask.reshape(-1)
+            if mel_mask_flat.any():
+                valid_logits = mel_logits_flat[mel_mask_flat]
+                valid_targets = mel_targets_flat[mel_mask_flat]
+                top1 = (valid_logits.argmax(dim=-1) == valid_targets).float().mean()
+            else:
+                top1 = torch.zeros((), device=device)
+
+        return text_loss, mel_loss, top1
+
+
 def compute_losses(
-    model: UnifiedVoice,
+    step_module: nn.Module,
     batch: Dict[str, torch.Tensor],
     device: torch.device,
     use_duration_control: bool = False,
     duration_dropout: float = 0.3,
 ) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, float]]:
-    condition = batch["condition"].to(device)
-    text_ids = batch["text_ids"].to(device)
-    codes = batch["codes"].to(device)
-    emo_vec = batch["emo_vec"].to(device)
-    text_lengths = batch["text_lengths"].to(device)
-    code_lengths = batch["code_lengths"].to(device)
+    condition = batch["condition"].to(device, non_blocking=True)
+    text_ids = batch["text_ids"].to(device, non_blocking=True)
+    codes = batch["codes"].to(device, non_blocking=True)
+    emo_vec = batch["emo_vec"].to(device, non_blocking=True)
+    text_lengths = batch["text_lengths"].to(device, non_blocking=True)
+    code_lengths = batch["code_lengths"].to(device, non_blocking=True)
 
-    batch_size = text_ids.size(0)
-    use_speed = torch.zeros(batch_size, dtype=torch.long, device=device)
-
-    text_inputs = model.set_text_padding(text_ids.clone(), text_lengths)
-    text_inputs = F.pad(text_inputs, (0, 1), value=model.stop_text_token)
-    text_inputs, text_targets = model.build_aligned_inputs_and_targets(
-        text_inputs, model.start_text_token, model.stop_text_token
+    text_loss, mel_loss, top1 = step_module(
+        condition,
+        text_ids,
+        codes,
+        emo_vec,
+        text_lengths,
+        code_lengths,
+        use_duration_control,
+        duration_dropout,
     )
-
-    mel_inputs = model.set_mel_padding(codes.clone(), code_lengths)
-    mel_inputs = F.pad(mel_inputs, (0, 1), value=model.stop_mel_token)
-    mel_inputs, mel_targets = model.build_aligned_inputs_and_targets(
-        mel_inputs, model.start_mel_token, model.stop_mel_token
-    )
-
-    duration_free = model.speed_emb(torch.zeros_like(use_speed))
-    if use_duration_control:
-        duration_ctrl = model.get_duration_embeddings(code_lengths)
-        if duration_dropout > 0.0:
-            drop_mask = torch.rand(code_lengths.size(0), device=device) < duration_dropout
-            if drop_mask.any():
-                duration_ctrl = torch.where(drop_mask.unsqueeze(1), duration_free, duration_ctrl)
-    else:
-        duration_ctrl = model.speed_emb(torch.ones_like(use_speed))
-    conds = torch.cat(
-        (condition + emo_vec.unsqueeze(1), duration_ctrl.unsqueeze(1), duration_free.unsqueeze(1)),
-        dim=1,
-    )
-
-    text_emb = model.text_embedding(text_inputs) + model.text_pos_embedding(text_inputs)
-    mel_emb = model.mel_embedding(mel_inputs) + model.mel_pos_embedding(mel_inputs)
-
-    text_logits, mel_logits = model.get_logits(conds, text_emb, model.text_head, mel_emb, model.mel_head)
-
-    text_mask = (
-        torch.arange(text_targets.size(1), device=device).unsqueeze(0)
-        < (text_lengths + 1).unsqueeze(1)
-    )
-    mel_mask = (
-        torch.arange(mel_targets.size(1), device=device).unsqueeze(0)
-        < (code_lengths + 1).unsqueeze(1)
-    )
-
-    text_ce = F.cross_entropy(text_logits, text_targets, reduction="none")
-    mel_ce = F.cross_entropy(mel_logits, mel_targets, reduction="none")
-
-    text_loss = (text_ce * text_mask).sum() / text_mask.sum().clamp_min(1)
-    mel_loss = (mel_ce * mel_mask).sum() / mel_mask.sum().clamp_min(1)
-
-    metrics = {}
-    with torch.no_grad():
-        mel_logits_flat = mel_logits.permute(0, 2, 1).reshape(-1, mel_logits.size(1))
-        mel_targets_flat = mel_targets.reshape(-1)
-        mel_mask_flat = mel_mask.reshape(-1)
-        if mel_mask_flat.any():
-            valid_logits = mel_logits_flat[mel_mask_flat]
-            valid_targets = mel_targets_flat[mel_mask_flat]
-            top1 = (valid_logits.argmax(dim=-1) == valid_targets).float().mean().item()
-        else:
-            top1 = 0.0
-        metrics["mel_top1"] = top1
-
-    return text_loss, mel_loss, metrics
+    return text_loss, mel_loss, {"mel_top1": float(top1.item())}
 
 
 def save_checkpoint(
@@ -556,7 +731,10 @@ def save_checkpoint(
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     state = {
-        "model": model.state_dict(),
+        # Always persist the bare UnifiedVoice weights so checkpoints stay
+        # interchangeable between single-GPU and multi-GPU runs (and loadable by
+        # the inference code, which knows nothing about DDP).
+        "model": unwrap_model(model).state_dict(),
         "optimizer": optimizer.state_dict(),
         "scheduler": scheduler.state_dict() if scheduler else None,
         "scaler": scaler.state_dict() if scaler else None,
@@ -570,11 +748,12 @@ def save_checkpoint(
 
 
 def evaluate(
-    model: UnifiedVoice,
+    model: nn.Module,
     loader: DataLoader,
     device: torch.device,
     use_duration_control: bool = False,
     duration_dropout: float = 0.3,
+    dist_ctx: Optional[DistContext] = None,
 ) -> Dict[str, float]:
     model.eval()
     totals = {"text_loss": 0.0, "mel_loss": 0.0, "mel_top1": 0.0}
@@ -594,6 +773,19 @@ def evaluate(
             totals["mel_top1"] += metrics["mel_top1"] * bsz
             count += bsz
     model.train()
+
+    if dist_ctx is not None and dist_ctx.enabled:
+        # Every rank saw a different shard, so pool the weighted sums before
+        # dividing; otherwise each rank would report (and log) a different figure.
+        packed = torch.tensor(
+            [totals["text_loss"], totals["mel_loss"], totals["mel_top1"], float(count)],
+            dtype=torch.float64,
+            device=device,
+        )
+        dist.all_reduce(packed, op=dist.ReduceOp.SUM)
+        totals["text_loss"], totals["mel_loss"], totals["mel_top1"] = packed[:3].tolist()
+        count = int(packed[3].item())
+
     if count == 0:
         return {k: 0.0 for k in totals}
     return {k: v / count for k, v in totals.items()}
@@ -601,30 +793,77 @@ def evaluate(
 
 def main() -> None:
     args = parse_args()
+    dist_ctx = init_distributed(args.ddp_backend)
+
+    # Identical seed everywhere so all ranks start from the same weights; the data
+    # order is decorrelated by DistributedSampler rather than by the seed.
     set_seed(args.seed)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    if torch.cuda.is_available():
+        device = torch.device(f"cuda:{dist_ctx.local_rank}")
+    else:
+        device = torch.device("cpu")
+
+    def log(message: str) -> None:
+        if dist_ctx.is_main:
+            print(message)
+
+    if dist_ctx.enabled:
+        log(
+            f"[Info] Distributed run: world_size={dist_ctx.world_size} "
+            f"backend={args.ddp_backend}"
+        )
 
     output_dir = args.output_dir.resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
     log_root = output_dir / "logs"
-    log_root.mkdir(parents=True, exist_ok=True)
+    if dist_ctx.is_main:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        log_root.mkdir(parents=True, exist_ok=True)
+    dist_ctx.barrier()
     run_name = (
         f"run_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
         if os.environ.get("INDEXTTS_RUN_NAME") is None
         else os.environ["INDEXTTS_RUN_NAME"]
     )
     log_dir = log_root / run_name
-    writer = SummaryWriter(log_dir=str(log_dir))
+    # Only rank 0 writes TensorBoard events, otherwise the ranks fight over files.
+    writer = SummaryWriter(log_dir=str(log_dir)) if dist_ctx.is_main else None
 
     tokenizer = load_tokenizer(args.tokenizer)
-    model = build_model(args.config, tokenizer, args.base_checkpoint, device)
+    model = build_model(
+        args.config,
+        tokenizer,
+        args.base_checkpoint,
+        device,
+        gradient_checkpointing=args.gradient_checkpointing,
+    )
+
+    if args.freeze_unused_modules:
+        # The training path consumes precomputed conditioning/emotion features, so
+        # these encoders never see a gradient.
+        frozen = 0
+        for name in (
+            "conditioning_encoder",
+            "perceiver_encoder",
+            "emo_conditioning_encoder",
+            "emo_perceiver_encoder",
+            "emovec_layer",
+            "emo_layer",
+        ):
+            submodule = getattr(model, name, None)
+            if submodule is None:
+                continue
+            for param in submodule.parameters():
+                param.requires_grad = False
+                frozen += 1
+        log(f"[Info] Froze {frozen} parameter tensors in unused conditioning modules.")
 
     train_specs = parse_manifest_specs(args.train_manifests, "--train-manifest")
     val_specs = parse_manifest_specs(args.val_manifests, "--val-manifest")
 
-    print("[Info] Loading training manifests...")
+    log("[Info] Loading training manifests...")
     train_dataset = JapaneseGPTDataset(train_specs)
-    print("[Info] Loading validation manifests...")
+    log("[Info] Loading validation manifests...")
     val_dataset = JapaneseGPTDataset(val_specs)
 
     manifest_metadata = {
@@ -651,21 +890,66 @@ def main() -> None:
 
     use_cuda = torch.cuda.is_available()
 
+    train_sampler: Optional[DistributedSampler] = None
+    val_sampler: Optional[DistributedSampler] = None
+    if dist_ctx.enabled:
+        train_sampler = DistributedSampler(
+            train_dataset,
+            num_replicas=dist_ctx.world_size,
+            rank=dist_ctx.rank,
+            shuffle=True,
+            seed=args.seed,
+            drop_last=True,  # keeps every rank on the same step count
+        )
+        val_sampler = DistributedSampler(
+            val_dataset,
+            num_replicas=dist_ctx.world_size,
+            rank=dist_ctx.rank,
+            shuffle=False,
+            drop_last=False,
+        )
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
-        shuffle=True,
+        shuffle=(train_sampler is None),
+        sampler=train_sampler,
         num_workers=args.num_workers,
         collate_fn=collate_batch,
         pin_memory=use_cuda,
+        drop_last=dist_ctx.enabled,
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=args.batch_size,
         shuffle=False,
+        sampler=val_sampler,
         num_workers=args.num_workers,
         collate_fn=collate_batch,
         pin_memory=use_cuda,
+    )
+
+    step_module: nn.Module = TrainStep(model)
+    if dist_ctx.enabled:
+        # static_graph subsumes unused-parameter detection (DDP works it out on the
+        # first iteration), and the two options are mutually exclusive.
+        find_unused = args.ddp_find_unused_parameters and not args.ddp_static_graph
+        step_module = DistributedDataParallel(
+            step_module,
+            device_ids=[dist_ctx.local_rank] if use_cuda else None,
+            output_device=dist_ctx.local_rank if use_cuda else None,
+            find_unused_parameters=find_unused,
+            static_graph=args.ddp_static_graph,
+        )
+        log(
+            f"[Info] DDP static_graph={args.ddp_static_graph} "
+            f"find_unused_parameters={find_unused}"
+        )
+
+    log(
+        f"[Info] Effective batch = {args.batch_size} x {dist_ctx.world_size} ranks "
+        f"x {args.grad_accumulation} accum = "
+        f"{args.batch_size * dist_ctx.world_size * args.grad_accumulation}"
     )
 
     optimizer = AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
@@ -693,8 +977,10 @@ def main() -> None:
         else:
             resume_path = args.resume
     if resume_path:
+        # Every rank restores the same checkpoint so weights and optimiser state
+        # stay in lockstep from step one.
         checkpoint = torch.load(resume_path, map_location=device)
-        model.load_state_dict(checkpoint["model"])
+        unwrap_model(step_module).load_state_dict(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         if checkpoint.get("scheduler"):
             scheduler.load_state_dict(checkpoint["scheduler"])
@@ -704,9 +990,9 @@ def main() -> None:
         global_step = checkpoint.get("step", 0)
         recent_checkpoints = checkpoint.get("recent_checkpoints", [])
         last_saved_step = checkpoint.get("step")
-        print(f"[Info] Resumed from {resume_path} at epoch {start_epoch}, step {global_step}.")
+        log(f"[Info] Resumed from {resume_path} at epoch {start_epoch}, step {global_step}.")
 
-    model.train()
+    step_module.train()
     optimizer.zero_grad(set_to_none=True)
 
     save_every = 1000
@@ -715,13 +1001,16 @@ def main() -> None:
     if args.val_interval > 0 and global_step > 0:
         # If we resumed exactly on a validation boundary we postpone evaluation until
         # after the next training step to avoid running validation before training.
-        print("[Info] Skipping startup validation; will evaluate after next training interval.")
+        log("[Info] Skipping startup validation; will evaluate after next training interval.")
 
     for epoch in range(start_epoch, args.epochs):
+        if train_sampler is not None:
+            # Reshuffles differently each epoch, and identically across ranks.
+            train_sampler.set_epoch(epoch)
         for batch_idx, batch in enumerate(train_loader):
             with torch.cuda.amp.autocast(enabled=use_amp):
                 text_loss, mel_loss, metrics = compute_losses(
-                    model,
+                    step_module,
                     batch,
                     device,
                     use_duration_control=args.use_duration_control,
@@ -748,7 +1037,7 @@ def main() -> None:
 
                 global_step += 1
 
-                if global_step % args.log_interval == 0:
+                if global_step % args.log_interval == 0 and dist_ctx.is_main:
                     writer.add_scalar("train/text_loss", text_loss.item(), global_step)
                     writer.add_scalar("train/mel_loss", mel_loss.item(), global_step)
                     writer.add_scalar("train/mel_top1", metrics["mel_top1"], global_step)
@@ -760,57 +1049,67 @@ def main() -> None:
                     )
 
                 if args.val_interval > 0 and global_step > 0 and global_step % args.val_interval == 0:
+                    # All ranks must take part: evaluate() ends in a collective.
                     val_metrics = evaluate(
-                        model,
+                        step_module,
                         val_loader,
                         device,
                         use_duration_control=args.use_duration_control,
                         duration_dropout=args.duration_dropout,
+                        dist_ctx=dist_ctx,
                     )
-                    writer.add_scalar("val/text_loss", val_metrics["text_loss"], global_step)
-                    writer.add_scalar("val/mel_loss", val_metrics["mel_loss"], global_step)
-                    writer.add_scalar("val/mel_top1", val_metrics["mel_top1"], global_step)
-                    print(
-                        f"[Val] epoch={epoch + 1} step={global_step} "
-                        f"text_loss={val_metrics['text_loss']:.4f} mel_loss={val_metrics['mel_loss']:.4f} "
-                        f"mel_top1={val_metrics['mel_top1']:.4f}"
-                    )
+                    if dist_ctx.is_main:
+                        writer.add_scalar("val/text_loss", val_metrics["text_loss"], global_step)
+                        writer.add_scalar("val/mel_loss", val_metrics["mel_loss"], global_step)
+                        writer.add_scalar("val/mel_top1", val_metrics["mel_top1"], global_step)
+                        print(
+                            f"[Val] epoch={epoch + 1} step={global_step} "
+                            f"text_loss={val_metrics['text_loss']:.4f} mel_loss={val_metrics['mel_loss']:.4f} "
+                            f"mel_top1={val_metrics['mel_top1']:.4f}"
+                        )
                     if val_metrics["mel_loss"] < best_val:
                         best_val = val_metrics["mel_loss"]
 
                 if global_step % save_every == 0:
                     ckpt_path = output_dir / f"model_step{global_step}.pth"
                     recent_checkpoints.append(str(ckpt_path))
-                    save_checkpoint(
-                        ckpt_path,
-                        model,
-                        optimizer,
-                        scheduler,
-                        scaler,
-                        epoch,
-                        global_step,
-                        recent_checkpoints,
-                        extra=checkpoint_extra("step"),
-                    )
-                    torch.save(
-                        {
-                            "model": model.state_dict(),
-                            "optimizer": optimizer.state_dict(),
-                            "scheduler": scheduler.state_dict(),
-                            "scaler": scaler.state_dict() if scaler else None,
-                            "epoch": epoch,
-                            "step": global_step,
-                            "recent_checkpoints": recent_checkpoints,
-                            "manifests": manifest_metadata,
-                        },
-                        output_dir / "latest.pth",
-                    )
-                    while len(recent_checkpoints) > 3:
-                        obsolete = recent_checkpoints.pop(0)
-                        try:
-                            os.remove(obsolete)
-                        except OSError:
-                            pass
+                    if dist_ctx.is_main:
+                        save_checkpoint(
+                            ckpt_path,
+                            step_module,
+                            optimizer,
+                            scheduler,
+                            scaler,
+                            epoch,
+                            global_step,
+                            recent_checkpoints,
+                            extra=checkpoint_extra("step"),
+                        )
+                        torch.save(
+                            {
+                                "model": unwrap_model(step_module).state_dict(),
+                                "optimizer": optimizer.state_dict(),
+                                "scheduler": scheduler.state_dict(),
+                                "scaler": scaler.state_dict() if scaler else None,
+                                "epoch": epoch,
+                                "step": global_step,
+                                "recent_checkpoints": recent_checkpoints,
+                                "manifests": manifest_metadata,
+                            },
+                            output_dir / "latest.pth",
+                        )
+                        while len(recent_checkpoints) > 3:
+                            obsolete = recent_checkpoints.pop(0)
+                            try:
+                                os.remove(obsolete)
+                            except OSError:
+                                pass
+                    else:
+                        while len(recent_checkpoints) > 3:
+                            recent_checkpoints.pop(0)
+                    # Hold the other ranks until the write lands, so a crash mid-save
+                    # cannot leave some ranks running ahead of a partial checkpoint.
+                    dist_ctx.barrier()
                     last_saved_step = global_step
 
                 if args.max_steps and global_step >= args.max_steps:
@@ -824,30 +1123,32 @@ def main() -> None:
 
         if args.val_interval == 0:
             val_metrics = evaluate(
-                model,
+                step_module,
                 val_loader,
                 device,
                 use_duration_control=args.use_duration_control,
                 duration_dropout=args.duration_dropout,
+                dist_ctx=dist_ctx,
             )
-            writer.add_scalar("val/text_loss", val_metrics["text_loss"], global_step)
-            writer.add_scalar("val/mel_loss", val_metrics["mel_loss"], global_step)
-            writer.add_scalar("val/mel_top1", val_metrics["mel_top1"], global_step)
-            print(
-                f"[Val] epoch={epoch + 1} step={global_step} "
-                f"text_loss={val_metrics['text_loss']:.4f} mel_loss={val_metrics['mel_loss']:.4f} "
-                f"mel_top1={val_metrics['mel_top1']:.4f}"
-            )
+            if dist_ctx.is_main:
+                writer.add_scalar("val/text_loss", val_metrics["text_loss"], global_step)
+                writer.add_scalar("val/mel_loss", val_metrics["mel_loss"], global_step)
+                writer.add_scalar("val/mel_top1", val_metrics["mel_top1"], global_step)
+                print(
+                    f"[Val] epoch={epoch + 1} step={global_step} "
+                    f"text_loss={val_metrics['text_loss']:.4f} mel_loss={val_metrics['mel_loss']:.4f} "
+                    f"mel_top1={val_metrics['mel_top1']:.4f}"
+                )
             if val_metrics["mel_loss"] < best_val:
                 best_val = val_metrics["mel_loss"]
 
 
-    if global_step > 0 and last_saved_step != global_step:
+    if global_step > 0 and last_saved_step != global_step and dist_ctx.is_main:
         ckpt_path = output_dir / f"model_step{global_step}.pth"
         recent_checkpoints.append(str(ckpt_path))
         save_checkpoint(
             ckpt_path,
-            model,
+            step_module,
             optimizer,
             scheduler,
             scaler,
@@ -858,7 +1159,7 @@ def main() -> None:
         )
         torch.save(
             {
-                "model": model.state_dict(),
+                "model": unwrap_model(step_module).state_dict(),
                 "optimizer": optimizer.state_dict(),
                 "scheduler": scheduler.state_dict(),
                 "scaler": scaler.state_dict() if scaler else None,
@@ -876,8 +1177,12 @@ def main() -> None:
             except OSError:
                 pass
 
-    writer.close()
-    print("Training complete.")
+    dist_ctx.barrier()
+    if writer is not None:
+        writer.close()
+    log("Training complete.")
+    if dist_ctx.enabled:
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":

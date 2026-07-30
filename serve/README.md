@@ -6,8 +6,11 @@ FastAPI + 單頁前端，用來切換不同訓練結果的 checkpoint 做試聽�
 cd serve
 cp .env.example .env
 docker compose up --build
-# http://127.0.0.1:8080
+# http://127.0.0.1:8123
 ```
+
+預設 port 是 **8123**（8080 在開發機上常被佔用）。要換就改 `.env` 的 `PORT`。
+確認想用的 port 沒被佔：`ss -tln | grep :<port>`
 
 映像重用 repo 根目錄 `Dockerfile` 的 `runner` stage，不需要第二份建置設定；FastAPI／uvicorn／python-multipart 已隨 `webui` extra 的 gradio 一併安裝。
 

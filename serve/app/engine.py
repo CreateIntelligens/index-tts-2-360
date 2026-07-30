@@ -222,9 +222,19 @@ class TTSEngine:
         model_id: Optional[str] = None,
         tokenizer_id: Optional[str] = None,
         prompt_path: Path,
+        # Emotion. Mirrors the four modes the official WebUI offers:
+        #   0 same as the speaker prompt (nothing extra to pass)
+        #   1 a separate emotion reference clip   -> emo_audio_path
+        #   2 an 8-dimensional emotion vector     -> emo_vector
+        #   3 a natural-language description      -> emo_text (experimental)
+        emo_mode: int = 0,
         emo_audio_path: Optional[Path] = None,
         emo_alpha: float = 1.0,
+        emo_vector: Optional[List[float]] = None,
         emo_text: Optional[str] = None,
+        emo_random: bool = False,
+        # Generation.
+        do_sample: bool = True,
         temperature: float = 0.8,
         top_p: float = 0.8,
         top_k: int = 30,
@@ -234,10 +244,29 @@ class TTSEngine:
         max_mel_tokens: int = 1500,
         max_text_tokens_per_sentence: int = 120,
         interval_silence: int = 200,
+        duration_seconds: Optional[float] = None,
         seed: Optional[int] = None,
     ) -> Dict[str, Any]:
         if not text or not text.strip():
             raise ValueError("text is empty")
+
+        # Only forward the arguments the chosen mode actually uses, so a stale
+        # slider from another mode cannot leak into the request.
+        emo_kwargs: Dict[str, Any] = {}
+        if emo_mode == 1 and emo_audio_path is not None:
+            emo_kwargs = {"emo_audio_prompt": str(emo_audio_path), "emo_alpha": emo_alpha}
+        elif emo_mode == 2 and emo_vector:
+            total = sum(emo_vector)
+            if total > 1.5:
+                raise ValueError(f"emotion vector sums to {total:.2f}; keep it at or below 1.5")
+            emo_kwargs = {"emo_vector": list(emo_vector), "emo_alpha": emo_alpha}
+        elif emo_mode == 3 and emo_text:
+            emo_kwargs = {
+                "use_emo_text": True,
+                "emo_text": emo_text,
+                "use_random": emo_random,
+                "emo_alpha": emo_alpha,
+            }
 
         with self._lock:  # one GPU: queue requests rather than interleave them
             tts = self.ensure(model_id, tokenizer_id)
@@ -260,32 +289,40 @@ class TTSEngine:
                 spk_audio_prompt=str(prompt_path),
                 text=text,
                 output_path=str(out_path),
-                emo_audio_prompt=str(emo_audio_path) if emo_audio_path else None,
-                emo_alpha=emo_alpha,
-                use_emo_text=bool(emo_text),
-                emo_text=emo_text or None,
                 interval_silence=interval_silence,
+                duration_seconds=duration_seconds,
                 max_text_tokens_per_sentence=max_text_tokens_per_sentence,
                 verbose=False,
+                do_sample=do_sample,
                 temperature=temperature,
                 top_p=top_p,
-                top_k=top_k,
+                top_k=top_k if top_k and top_k > 0 else None,
                 repetition_penalty=repetition_penalty,
                 num_beams=num_beams,
                 length_penalty=length_penalty,
                 max_mel_tokens=max_mel_tokens,
+                **emo_kwargs,
             )
             elapsed = time.time() - started
 
         if not out_path.is_file():
             raise RuntimeError("inference produced no audio file")
 
+        import soundfile as sf
+
+        try:
+            audio_seconds = round(sf.info(str(out_path)).duration, 2)
+        except Exception:
+            audio_seconds = None
+
         return {
             "file": out_path.name,
             "path": str(out_path),
             "seconds": round(elapsed, 2),
+            "audio_seconds": audio_seconds,
             "model": (self._loaded or ("?", "?"))[0],
             "tokenizer": (self._loaded or ("?", "?"))[1],
+            "emo_mode": emo_mode,
         }
 
 

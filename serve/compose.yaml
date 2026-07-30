@@ -44,13 +44,17 @@ services:
       - ./outputs:/app/outputs
       # The service code, mounted so edits do not need a rebuild.
       - ./app:/app/serve/app
-    ports:
-      - "${PORT:-8080}:8000"
+    # Host networking instead of a bridge + port mapping. This box already has 34
+    # docker networks and the default address pools are fully subnetted, so
+    # creating another one fails. Widening the pools needs a daemon restart and
+    # pruning networks would disturb other people's stacks, whereas host mode
+    # needs neither. The service binds $PORT directly on the host.
+    network_mode: host
     working_dir: /app/serve/app
     command: >
-      uvicorn main:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 600
+      uvicorn main:app --host 0.0.0.0 --port ${PORT:-8123} --timeout-keep-alive 600
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/api/health')\""]
+      test: ["CMD-SHELL", "python -c \"import os,urllib.request;urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\\'PORT\\',8123)}/api/health')\""]
       interval: 30s
       timeout: 10s
       retries: 5

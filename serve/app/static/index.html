@@ -6,75 +6,78 @@
 <title>IndexTTS2 · 本機推論</title>
 <style>
   :root {
-    --bg: #0f1115;
-    --panel: #171a21;
-    --panel-2: #1e222b;
-    --line: #2b303c;
-    --text: #e6e8ee;
-    --muted: #9aa3b2;
-    --accent: #6ea8fe;
-    --accent-ink: #0b1220;
-    --ok: #4ec9a5;
-    --err: #ff7a7a;
-    --radius: 10px;
+    --bg:#0f1115; --panel:#171a21; --panel-2:#1e222b; --line:#2b303c;
+    --text:#e6e8ee; --muted:#9aa3b2; --accent:#6ea8fe; --accent-ink:#0b1220;
+    --ok:#4ec9a5; --err:#ff7a7a; --warn:#e8b339; --r:10px;
   }
   @media (prefers-color-scheme: light) {
-    :root {
-      --bg: #f5f6f8; --panel: #ffffff; --panel-2: #f0f2f5; --line: #dfe3ea;
-      --text: #1a1d24; --muted: #5c6675; --accent: #2f6fdd; --accent-ink: #ffffff;
-    }
+    :root { --bg:#f5f6f8; --panel:#fff; --panel-2:#f0f2f5; --line:#dfe3ea;
+            --text:#1a1d24; --muted:#5c6675; --accent:#2f6fdd; --accent-ink:#fff; }
   }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font: 15px/1.55 system-ui, -apple-system, "Noto Sans TC", "Microsoft JhengHei", sans-serif;
-  }
-  header {
-    padding: 18px 24px; border-bottom: 1px solid var(--line);
-    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
-  }
-  header h1 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: .01em; }
-  header .sub { color: var(--muted); font-size: 13px; }
-  #status { margin-left: auto; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  #status b { color: var(--text); font-weight: 600; }
-  main { max-width: 1180px; margin: 0 auto; padding: 22px 24px 60px; display: grid; gap: 18px; grid-template-columns: minmax(0,1.35fr) minmax(0,1fr); }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; }
-  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 0 0 12px; font-weight: 650; }
-  label { display: block; font-size: 12.5px; color: var(--muted); margin: 12px 0 5px; }
-  label:first-of-type { margin-top: 0; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+    font:15px/1.55 system-ui,-apple-system,"Noto Sans TC","Microsoft JhengHei",sans-serif; }
+  header { padding:16px 22px; border-bottom:1px solid var(--line);
+    display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+  header h1 { font-size:17px; margin:0; font-weight:650; }
+  header .sub { color:var(--muted); font-size:13px; }
+  #status { margin-left:auto; font-size:12.5px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  #status b { color:var(--text); font-weight:600; }
+  main { max-width:1240px; margin:0 auto; padding:20px 22px 60px;
+    display:grid; gap:16px; grid-template-columns:minmax(0,1.3fr) minmax(0,1fr); }
+  @media (max-width:940px) { main { grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:15px 17px; }
+  .card h2 { font-size:12.5px; text-transform:uppercase; letter-spacing:.07em;
+    color:var(--muted); margin:0 0 12px; font-weight:650; }
+  label { display:block; font-size:12.5px; color:var(--muted); margin:12px 0 5px; }
+  .card > label:first-of-type, .grp > label:first-child { margin-top:0; }
   textarea, input, select, button {
-    font: inherit; color: var(--text); background: var(--panel-2);
-    border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; width: 100%;
-  }
-  textarea { min-height: 132px; resize: vertical; line-height: 1.6; }
-  input[type=file] { padding: 7px 9px; }
-  select { appearance: none; background-image: none; }
-  button {
-    cursor: pointer; background: var(--accent); color: var(--accent-ink);
-    border: 0; font-weight: 650; padding: 11px 16px;
-  }
-  button:disabled { opacity: .5; cursor: progress; }
-  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); font-weight: 500; }
-  .row { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
-  .row-3 { display: grid; gap: 10px; grid-template-columns: repeat(3, 1fr); }
-  .inline { display: flex; gap: 8px; align-items: center; }
-  .inline > * { width: auto; }
-  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
-  details { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
-  summary { cursor: pointer; font-size: 12.5px; color: var(--muted); font-weight: 600; }
-  .results { display: grid; gap: 10px; margin-top: 12px; }
-  .result { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 11px 13px; }
-  .result .meta { font-size: 12px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 7px; }
-  .result .meta .tag { background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 1px 7px; }
-  .result .txt { font-size: 13.5px; margin-bottom: 8px; word-break: break-word; }
-  audio { width: 100%; height: 34px; }
-  .msg { margin-top: 12px; font-size: 13px; padding: 10px 12px; border-radius: 8px; display: none; white-space: pre-wrap; }
-  .msg.show { display: block; }
-  .msg.err { background: color-mix(in srgb, var(--err) 14%, transparent); color: var(--err); border: 1px solid color-mix(in srgb, var(--err) 34%, transparent); }
-  .msg.ok { background: color-mix(in srgb, var(--ok) 13%, transparent); color: var(--ok); border: 1px solid color-mix(in srgb, var(--ok) 32%, transparent); }
-  .note { background: color-mix(in srgb, var(--accent) 10%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent); border-radius: 8px; padding: 10px 12px; font-size: 12.5px; color: var(--text); }
-  code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+    font:inherit; color:var(--text); background:var(--panel-2);
+    border:1px solid var(--line); border-radius:8px; padding:9px 11px; width:100%; }
+  textarea { min-height:120px; resize:vertical; line-height:1.6; }
+  input[type=file] { padding:7px 9px; }
+  input[type=range] { padding:0; height:26px; background:transparent; border:0; }
+  input[type=checkbox] { width:auto; }
+  select { appearance:none; }
+  button { cursor:pointer; background:var(--accent); color:var(--accent-ink); border:0; font-weight:650; padding:11px 16px; }
+  button:disabled { opacity:.5; cursor:progress; }
+  button.ghost { background:transparent; color:var(--text); border:1px solid var(--line); font-weight:500; padding:9px 12px; }
+  button.sm { padding:6px 10px; font-size:12.5px; }
+  .row { display:grid; gap:10px; grid-template-columns:1fr 1fr; }
+  .row-3 { display:grid; gap:10px; grid-template-columns:repeat(3,1fr); }
+  .row-4 { display:grid; gap:10px; grid-template-columns:repeat(4,1fr); }
+  .inline { display:flex; gap:8px; align-items:center; }
+  .inline > *:not(select):not(input[type=file]) { width:auto; }
+  .hint { font-size:11.5px; color:var(--muted); margin-top:5px; line-height:1.5; }
+  details { margin-top:14px; border-top:1px solid var(--line); padding-top:12px; }
+  summary { cursor:pointer; font-size:12.5px; color:var(--muted); font-weight:600; }
+  audio { width:100%; height:32px; margin-top:6px; }
+  .tabs { display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
+  .tabs button { flex:1; min-width:120px; background:var(--panel-2); color:var(--muted);
+    border:1px solid var(--line); font-weight:550; font-size:12.5px; padding:9px 8px; }
+  .tabs button.on { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
+  .grp { display:none; } .grp.on { display:block; }
+  .slider { display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center; }
+  .slider output { font-variant-numeric:tabular-nums; font-size:12px; color:var(--muted); min-width:34px; text-align:right; }
+  .vec { display:grid; grid-template-columns:repeat(2,1fr); gap:4px 14px; }
+  .vec .slider { grid-template-columns:34px 1fr auto; }
+  .vec .slider span { font-size:12.5px; }
+  .msg { margin-top:12px; font-size:13px; padding:10px 12px; border-radius:8px; display:none; white-space:pre-wrap; }
+  .msg.show { display:block; }
+  .msg.err { background:color-mix(in srgb,var(--err) 14%,transparent); color:var(--err); border:1px solid color-mix(in srgb,var(--err) 34%,transparent); }
+  .msg.ok  { background:color-mix(in srgb,var(--ok) 13%,transparent);  color:var(--ok);  border:1px solid color-mix(in srgb,var(--ok) 32%,transparent); }
+  .note { background:color-mix(in srgb,var(--accent) 10%,transparent);
+    border:1px solid color-mix(in srgb,var(--accent) 28%,transparent);
+    border-radius:8px; padding:10px 12px; font-size:12.5px; margin-bottom:12px; }
+  .warn { background:color-mix(in srgb,var(--warn) 12%,transparent);
+    border:1px solid color-mix(in srgb,var(--warn) 30%,transparent);
+    border-radius:8px; padding:9px 11px; font-size:11.5px; margin-top:8px; }
+  code { background:var(--panel-2); padding:1px 5px; border-radius:4px; font-size:12.5px; }
+  .results { display:grid; gap:10px; margin-top:12px; }
+  .result { background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:11px 13px; }
+  .result .meta { font-size:11.5px; color:var(--muted); display:flex; gap:7px; flex-wrap:wrap; margin-bottom:7px; }
+  .result .meta .tag { background:var(--panel); border:1px solid var(--line); border-radius:5px; padding:1px 7px; }
+  .result .txt { font-size:13px; margin-bottom:6px; word-break:break-word; }
 </style>
 </head>
 <body>
@@ -106,36 +109,95 @@
       </div>
     </div>
 
-    <label for="voice">參考聲音（決定音色）</label>
+    <label for="voice">音色參考音檔</label>
     <div class="inline">
       <select id="voice" style="flex:1"></select>
-      <button class="ghost" id="refresh" type="button" title="重新掃描">↻</button>
+      <button class="ghost sm" id="refresh" type="button" title="重新掃描">↻</button>
     </div>
+    <audio id="voice-preview" controls preload="none"></audio>
 
-    <label for="upload">或上傳音檔</label>
+    <label for="upload">或上傳（僅本次使用）</label>
     <div class="inline">
       <input type="file" id="upload" accept="audio/*" style="flex:1">
-      <button class="ghost" id="save-voice" type="button">存為常用</button>
+      <button class="ghost sm" id="save-voice" type="button">存為常用</button>
     </div>
-    <div class="hint">上傳的檔案只用於這次請求；按「存為常用」才會留在清單裡。建議 3–10 秒、乾淨的單人語音。</div>
+    <audio id="upload-preview" controls preload="none" style="display:none"></audio>
+    <div class="hint">建議 3–10 秒、乾淨的單人語音。<b>參考音檔同時決定音色與語速韻律</b> —— 想要慢一點就挑講話慢的參考音檔。</div>
+
+    <label>情感控制</label>
+    <div class="tabs" id="emo-tabs">
+      <button type="button" data-mode="0" class="on">與音色參考相同</button>
+      <button type="button" data-mode="1">情感參考音檔</button>
+      <button type="button" data-mode="2">情感向量</button>
+      <button type="button" data-mode="3">情感描述文字</button>
+    </div>
+
+    <div class="grp on" data-mode="0">
+      <div class="hint">預設。情緒跟隨音色參考音檔 —— 這是本專案微調時對齊的行為。</div>
+    </div>
+
+    <div class="grp" data-mode="1">
+      <label for="emo-voice">情感參考音檔（音色仍來自上面的音色參考）</label>
+      <div class="inline">
+        <select id="emo-voice" style="flex:1"></select>
+      </div>
+      <audio id="emo-voice-preview" controls preload="none"></audio>
+      <label for="emo-upload">或上傳</label>
+      <input type="file" id="emo-upload" accept="audio/*">
+    </div>
+
+    <div class="grp" data-mode="2">
+      <div class="vec" id="emo-vec"></div>
+      <div class="hint">八維總和不可超過 <b>1.5</b>（目前 <span id="vec-sum">0.00</span>）。</div>
+    </div>
+
+    <div class="grp" data-mode="3">
+      <label for="emo-text">情感描述</label>
+      <input type="text" id="emo-text" placeholder="像是：開心一點、有點生氣、很緊張">
+      <div class="inline" style="margin-top:8px">
+        <input type="checkbox" id="emo-random"><label for="emo-random" style="margin:0">情感隨機採樣</label>
+      </div>
+      <div class="warn">官方標註為<b>實驗性功能</b>，由 Qwen 模型把描述轉成情感向量，結果不一定穩定。</div>
+    </div>
+
+    <div class="slider" style="margin-top:12px">
+      <div style="flex:1">
+        <label for="emo-alpha" style="margin:0">情感強度 emo_alpha</label>
+        <input type="range" id="emo-alpha" min="0" max="1.5" step="0.05" value="1.0">
+      </div>
+      <output id="emo-alpha-v">1.00</output>
+    </div>
 
     <details>
-      <summary>進階參數</summary>
-      <div class="row-3">
-        <div><label for="temperature">temperature</label><input id="temperature" type="number" step="0.05" value="0.8"></div>
-        <div><label for="top_p">top_p</label><input id="top_p" type="number" step="0.05" value="0.8"></div>
-        <div><label for="top_k">top_k</label><input id="top_k" type="number" step="1" value="30"></div>
+      <summary>生成參數</summary>
+      <div class="inline" style="margin:10px 0">
+        <input type="checkbox" id="do_sample" checked><label for="do_sample" style="margin:0">do_sample（取樣，關閉則為貪婪解碼）</label>
       </div>
       <div class="row-3">
-        <div><label for="repetition_penalty">repetition_penalty</label><input id="repetition_penalty" type="number" step="0.5" value="10"></div>
-        <div><label for="num_beams">num_beams</label><input id="num_beams" type="number" step="1" value="3"></div>
-        <div><label for="seed">seed（留空=隨機）</label><input id="seed" type="number" step="1" placeholder=""></div>
+        <div><label for="temperature">temperature</label><input id="temperature" type="number" step="0.05" min="0.1" max="2" value="0.8"></div>
+        <div><label for="top_p">top_p</label><input id="top_p" type="number" step="0.05" min="0" max="1" value="0.8"></div>
+        <div><label for="top_k">top_k（0=停用）</label><input id="top_k" type="number" step="1" min="0" max="100" value="30"></div>
+      </div>
+      <div class="row-3">
+        <div><label for="repetition_penalty">repetition_penalty</label><input id="repetition_penalty" type="number" step="0.5" min="0.1" max="20" value="10"></div>
+        <div><label for="num_beams">num_beams</label><input id="num_beams" type="number" step="1" min="1" max="10" value="3"></div>
+        <div><label for="length_penalty">length_penalty</label><input id="length_penalty" type="number" step="0.1" min="-2" max="2" value="0"></div>
+      </div>
+      <div class="row-3">
+        <div><label for="max_mel_tokens">max_mel_tokens</label><input id="max_mel_tokens" type="number" step="10" min="50" max="1815" value="1500"></div>
+        <div><label for="max_text_tokens_per_sentence">每句最大文字 token</label><input id="max_text_tokens_per_sentence" type="number" step="10" min="20" max="600" value="120"></div>
+        <div><label for="interval_silence">句間靜音 (ms)</label><input id="interval_silence" type="number" step="50" min="0" max="2000" value="200"></div>
       </div>
       <div class="row">
-        <div><label for="emo_text">情感描述（選填）</label><input id="emo_text" type="text" placeholder="開心一點"></div>
-        <div><label for="emo_alpha">emo_alpha</label><input id="emo_alpha" type="number" step="0.1" value="1.0"></div>
+        <div><label for="seed">seed（留空=隨機）</label><input id="seed" type="number" step="1" placeholder=""></div>
+        <div><label for="duration_seconds">目標長度（秒，留空=不指定）</label><input id="duration_seconds" type="number" step="0.5" min="0" placeholder=""></div>
       </div>
-      <div class="hint">未提供 <code>duration_seconds</code>：目前推論端的秒數換算率與實際 semantic token rate 不符（23.4 vs 50 Hz），會產出約一半長度，修好前先不開放。</div>
+      <div class="warn">
+        <b>目標長度目前不會生效。</b>IndexTTS2 的長度控制需要模型以 <code>--use-duration-control</code> 訓練，
+        base 與目前的 v1/v2 都沒有（官方 README 也標註此功能尚未啟用）。換算率的 bug 已修（23.4 → 50 Hz），
+        留這個欄位是為了之後訓練出支援的模型時可以直接用。<b>想調語速請換參考音檔。</b>
+      </div>
+      <div style="margin-top:10px"><button class="ghost sm" id="reset-params" type="button">回復預設值</button></div>
     </details>
 
     <div style="margin-top:16px"><button id="go">生成</button></div>
@@ -151,6 +213,12 @@
 
 <script>
 const $ = id => document.getElementById(id);
+const EMO_LABELS = ['喜','怒','哀','懼','厭惡','低落','驚喜','平靜'];
+const DEFAULTS = { do_sample:true, temperature:0.8, top_p:0.8, top_k:30,
+  repetition_penalty:10, num_beams:3, length_penalty:0, max_mel_tokens:1500,
+  max_text_tokens_per_sentence:120, interval_silence:200 };
+let emoMode = 0;
+
 const msg = (text, kind) => {
   const el = $('msg');
   el.textContent = text;
@@ -158,122 +226,196 @@ const msg = (text, kind) => {
   if (kind === 'ok') setTimeout(() => { el.className = 'msg'; }, 4000);
 };
 
-function fill(select, items, valueKey, labelFn) {
-  const previous = select.value;
-  select.innerHTML = '';
-  for (const item of items) {
-    const opt = document.createElement('option');
-    opt.value = item[valueKey];
-    opt.textContent = labelFn(item);
-    select.appendChild(opt);
-  }
-  if (previous && items.some(i => i[valueKey] === previous)) select.value = previous;
+// --- emotion vector sliders ---
+const vecWrap = $('emo-vec');
+EMO_LABELS.forEach((lab, i) => {
+  const row = document.createElement('div');
+  row.className = 'slider';
+  row.innerHTML = `<span>${lab}</span>
+    <input type="range" id="vec${i}" min="0" max="1" step="0.05" value="0">
+    <output id="vec${i}v">0.00</output>`;
+  vecWrap.appendChild(row);
+});
+function vecValues() { return EMO_LABELS.map((_, i) => parseFloat($('vec' + i).value)); }
+function refreshVecSum() {
+  EMO_LABELS.forEach((_, i) => { $('vec' + i + 'v').textContent = parseFloat($('vec' + i).value).toFixed(2); });
+  const sum = vecValues().reduce((a, b) => a + b, 0);
+  const el = $('vec-sum');
+  el.textContent = sum.toFixed(2);
+  el.style.color = sum > 1.5 ? 'var(--err)' : 'var(--muted)';
 }
+EMO_LABELS.forEach((_, i) => $('vec' + i).addEventListener('input', refreshVecSum));
+refreshVecSum();
 
+$('emo-alpha').addEventListener('input', e => { $('emo-alpha-v').textContent = parseFloat(e.target.value).toFixed(2); });
+
+// --- emotion mode tabs ---
+$('emo-tabs').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-mode]');
+  if (!btn) return;
+  emoMode = parseInt(btn.dataset.mode, 10);
+  document.querySelectorAll('#emo-tabs button').forEach(b => b.classList.toggle('on', b === btn));
+  document.querySelectorAll('.grp[data-mode]').forEach(g => g.classList.toggle('on', +g.dataset.mode === emoMode));
+});
+
+$('reset-params').onclick = () => {
+  for (const [k, v] of Object.entries(DEFAULTS)) {
+    const el = $(k);
+    if (el.type === 'checkbox') el.checked = v; else el.value = v;
+  }
+  $('seed').value = ''; $('duration_seconds').value = '';
+  $('emo-alpha').value = 1; $('emo-alpha-v').textContent = '1.00';
+  EMO_LABELS.forEach((_, i) => { $('vec' + i).value = 0; });
+  refreshVecSum();
+  msg('已回復預設值', 'ok');
+};
+
+// --- status / lists ---
 async function loadStatus() {
   try {
-    const health = await (await fetch('/api/health')).json();
-    const bits = [];
-    bits.push(health.cuda ? 'CUDA' : 'CPU');
-    if (health.gpu) bits.push(`${health.gpu.free_mb}/${health.gpu.total_mb} MB free`);
-    bits.push(health.loaded ? `已載入 <b>${health.loaded.model}</b>` : '尚未載入模型');
-    bits.push(health.zh_to_simplified ? 'T2S <b>on</b>' : 'T2S <b style="color:var(--err)">off</b>');
+    const h = await (await fetch('/api/health')).json();
+    const bits = [h.cuda ? 'CUDA' : 'CPU'];
+    if (h.gpu) bits.push(`${h.gpu.free_mb}/${h.gpu.total_mb} MB free`);
+    bits.push(h.loaded ? `已載入 <b>${h.loaded.model}</b>` : '尚未載入模型');
+    bits.push(h.zh_to_simplified ? 'T2S <b>on</b>' : 'T2S <b style="color:var(--err)">off</b>');
     $('status').innerHTML = bits.join(' · ');
-  } catch (e) {
-    $('status').textContent = '無法連線到後端';
+  } catch { $('status').textContent = '無法連線到後端'; }
+}
+
+function fill(select, items, labelFn, placeholder) {
+  const prev = select.value;
+  select.innerHTML = '';
+  if (!items.length && placeholder) {
+    select.innerHTML = `<option value="">${placeholder}</option>`;
+    return;
   }
+  for (const it of items) {
+    const o = document.createElement('option');
+    o.value = it.id; o.textContent = labelFn(it);
+    select.appendChild(o);
+  }
+  if (prev && items.some(i => i.id === prev)) select.value = prev;
 }
 
 async function loadLists() {
-  const data = await (await fetch('/api/models')).json();
-  fill($('model'), data.models, 'id', m => m.size_mb ? `${m.label} — ${m.size_mb} MB` : m.label);
-  fill($('tokenizer'), data.tokenizers, 'id', t => t.label);
+  const d = await (await fetch('/api/models')).json();
+  fill($('model'), d.models, m => m.size_mb ? `${m.label} — ${m.size_mb} MB` : m.label);
+  fill($('tokenizer'), d.tokenizers, t => t.label);
   const voices = (await (await fetch('/api/voices')).json()).voices;
-  if (voices.length) {
-    fill($('voice'), voices, 'id', v => v.label);
-  } else {
-    $('voice').innerHTML = '<option value="">（尚無，請上傳）</option>';
-  }
+  fill($('voice'), voices, v => v.label, '（尚無，請上傳）');
+  fill($('emo-voice'), voices, v => v.label, '（尚無，請上傳）');
+  syncPreview($('voice'), $('voice-preview'));
+  syncPreview($('emo-voice'), $('emo-voice-preview'));
 }
+
+function syncPreview(select, audio) {
+  if (select.value) { audio.src = `/api/voices/${encodeURIComponent(select.value)}/audio`; audio.style.display = ''; }
+  else { audio.removeAttribute('src'); audio.style.display = 'none'; }
+}
+$('voice').addEventListener('change', () => syncPreview($('voice'), $('voice-preview')));
+$('emo-voice').addEventListener('change', () => syncPreview($('emo-voice'), $('emo-voice-preview')));
+
+// local preview for a not-yet-uploaded file
+function localPreview(input, audio) {
+  input.addEventListener('change', () => {
+    const f = input.files[0];
+    if (!f) { audio.style.display = 'none'; return; }
+    audio.src = URL.createObjectURL(f);
+    audio.style.display = '';
+  });
+}
+localPreview($('upload'), $('upload-preview'));
 
 $('refresh').onclick = async () => { await loadLists(); await loadStatus(); msg('已重新掃描', 'ok'); };
 
 $('save-voice').onclick = async () => {
-  const file = $('upload').files[0];
-  if (!file) return msg('請先選擇音檔', 'err');
-  const body = new FormData();
-  body.append('file', file);
-  const res = await fetch('/api/voices', { method: 'POST', body });
+  const f = $('upload').files[0];
+  if (!f) return msg('請先選擇音檔', 'err');
+  const body = new FormData(); body.append('file', f);
+  const res = await fetch('/api/voices', { method:'POST', body });
   if (!res.ok) return msg('存檔失敗：' + (await res.text()), 'err');
-  const data = await res.json();
-  $('upload').value = '';
+  const d = await res.json();
+  $('upload').value = ''; $('upload-preview').style.display = 'none';
   await loadLists();
-  $('voice').value = data.saved;
-  msg('已存為常用：' + data.saved, 'ok');
+  $('voice').value = d.saved; syncPreview($('voice'), $('voice-preview'));
+  msg('已存為常用：' + d.saved, 'ok');
 };
 
+// --- generate ---
 $('go').onclick = async () => {
   const text = $('text').value.trim();
   if (!text) return msg('請輸入文字', 'err');
+  if (emoMode === 2 && vecValues().reduce((a, b) => a + b, 0) > 1.5) return msg('情感向量總和超過 1.5', 'err');
+  if (emoMode === 3 && !$('emo-text').value.trim()) return msg('請輸入情感描述文字', 'err');
 
   const body = new FormData();
   body.append('text', text);
   body.append('model', $('model').value);
   body.append('tokenizer', $('tokenizer').value);
-  const file = $('upload').files[0];
-  if (file) body.append('reference', file);
+
+  const f = $('upload').files[0];
+  if (f) body.append('reference', f);
   else if ($('voice').value) body.append('voice', $('voice').value);
-  for (const key of ['temperature','top_p','top_k','repetition_penalty','num_beams','emo_alpha']) {
-    body.append(key, $(key).value);
+
+  body.append('emo_mode', emoMode);
+  body.append('emo_alpha', $('emo-alpha').value);
+  if (emoMode === 1) {
+    const ef = $('emo-upload').files[0];
+    if (ef) body.append('emo_reference', ef);
+    else if ($('emo-voice').value) body.append('emo_voice', $('emo-voice').value);
+  } else if (emoMode === 2) {
+    body.append('emo_vector', JSON.stringify(vecValues()));
+  } else if (emoMode === 3) {
+    body.append('emo_text', $('emo-text').value.trim());
+    body.append('emo_random', $('emo-random').checked);
+  }
+
+  body.append('do_sample', $('do_sample').checked);
+  for (const k of ['temperature','top_p','top_k','repetition_penalty','num_beams',
+                   'length_penalty','max_mel_tokens','max_text_tokens_per_sentence','interval_silence']) {
+    body.append(k, $(k).value);
   }
   if ($('seed').value) body.append('seed', $('seed').value);
-  if ($('emo_text').value.trim()) body.append('emo_text', $('emo_text').value.trim());
+  if ($('duration_seconds').value) body.append('duration_seconds', $('duration_seconds').value);
 
-  $('go').disabled = true;
-  $('go').textContent = '生成中…';
+  $('go').disabled = true; $('go').textContent = '生成中…';
   msg('第一次使用某個模型需要載入權重，可能要等一分鐘。', '');
   try {
-    const res = await fetch('/api/tts', { method: 'POST', body });
+    const res = await fetch('/api/tts', { method:'POST', body });
     if (!res.ok) {
       let detail = await res.text();
-      try { detail = JSON.parse(detail).detail ?? detail; } catch (_) {}
+      try { detail = JSON.parse(detail).detail ?? detail; } catch {}
       throw new Error(detail);
     }
-    const data = await res.json();
-    addResult(text, data);
-    msg(`完成，耗時 ${data.seconds}s`, 'ok');
+    addResult(text, await res.json());
+    msg('完成', 'ok');
   } catch (e) {
     msg('生成失敗：' + e.message, 'err');
   } finally {
-    $('go').disabled = false;
-    $('go').textContent = '生成';
+    $('go').disabled = false; $('go').textContent = '生成';
     loadStatus();
   }
 };
 
-function addResult(text, data) {
+function addResult(text, d) {
   $('empty').style.display = 'none';
+  const modeName = ['同音色參考','情感參考音檔','情感向量','情感描述'][d.emo_mode] || '?';
   const div = document.createElement('div');
   div.className = 'result';
   const meta = document.createElement('div');
   meta.className = 'meta';
-  for (const [k, v] of [['模型', data.model], ['tokenizer', data.tokenizer], ['參考', data.reference], ['耗時', data.seconds + 's']]) {
-    const span = document.createElement('span');
-    span.className = 'tag';
-    span.textContent = `${k}: ${v}`;
-    meta.appendChild(span);
+  const tags = [['模型', d.model], ['參考', d.reference], ['情感', modeName],
+                ['音長', (d.audio_seconds ?? '?') + 's'], ['耗時', d.seconds + 's']];
+  if (d.emo_reference) tags.splice(3, 0, ['情感參考', d.emo_reference]);
+  for (const [k, v] of tags) {
+    const s = document.createElement('span'); s.className = 'tag'; s.textContent = `${k}: ${v}`;
+    meta.appendChild(s);
   }
-  const txt = document.createElement('div');
-  txt.className = 'txt';
-  txt.textContent = text;
-  const audio = document.createElement('audio');
-  audio.controls = true;
-  audio.src = data.url;
+  const txt = document.createElement('div'); txt.className = 'txt'; txt.textContent = text;
+  const audio = document.createElement('audio'); audio.controls = true; audio.src = d.url;
   const dl = document.createElement('a');
-  dl.href = data.url;
-  dl.download = data.file;
-  dl.textContent = '下載 ' + data.file;
-  dl.style.cssText = 'font-size:12px;color:var(--muted)';
+  dl.href = d.url; dl.download = d.file; dl.textContent = '下載 ' + d.file;
+  dl.style.cssText = 'font-size:11.5px;color:var(--muted)';
   div.append(meta, txt, audio, dl);
   $('results').prepend(div);
 }

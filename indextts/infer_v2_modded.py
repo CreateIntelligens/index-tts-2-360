@@ -158,9 +158,15 @@ class IndexTTS2:
 
         self.qwen_emo = QwenEmotion(os.path.join(self.model_dir, self.cfg.qwen_emo_path))
 
-        dataset_sr = float(OmegaConf.select(self.cfg, "dataset.sample_rate", default=24000))
-        mel_comp = float(OmegaConf.select(self.cfg, "gpt.mel_length_compression", default=1024))
-        self.tokens_per_second = dataset_sr / mel_comp if mel_comp > 0 else None
+        # Rate of the *semantic* codes the GPT predicts, which is what
+        # `target_duration_tokens` is counted in. These come from w2v-BERT 2.0 at
+        # 16 kHz, i.e. 50 frames per second — measured at 49.13 Hz +- 0.28 over the
+        # training corpus. The previous `dataset.sample_rate / mel_length_compression`
+        # (24000/1024 = 23.4) is the mel frame rate, not the semantic one, and made a
+        # requested duration come out roughly half as long.
+        self.tokens_per_second = float(
+            OmegaConf.select(self.cfg, "gpt.semantic_tokens_per_second", default=50.0)
+        )
 
         if gpt_checkpoint_path is not None:
             self.gpt_path = os.path.abspath(gpt_checkpoint_path)

@@ -9,6 +9,7 @@ Hanji on the input side.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -77,6 +78,24 @@ async def add_voice(file: UploadFile = File(...), name: Optional[str] = Form(Non
     return {"saved": target.relative_to(VOICES_DIR).as_posix()}
 
 
+@app.get("/api/voices/{voice_id:path}/audio")
+def voice_audio(voice_id: str):
+    """Stream a saved reference clip so the UI can preview it before synthesising."""
+    target = (VOICES_DIR / voice_id).resolve()
+    if VOICES_DIR.resolve() not in target.parents or not target.is_file():
+        raise HTTPException(404, "No such voice")
+    suffix = target.suffix.lower()
+    media = {
+        ".wav": "audio/wav",
+        ".mp3": "audio/mpeg",
+        ".flac": "audio/flac",
+        ".ogg": "audio/ogg",
+        ".opus": "audio/ogg",
+        ".m4a": "audio/mp4",
+    }.get(suffix, "application/octet-stream")
+    return FileResponse(target, media_type=media, filename=target.name)
+
+
 @app.delete("/api/voices/{voice_id:path}")
 def delete_voice(voice_id: str):
     target = (VOICES_DIR / voice_id).resolve()
@@ -92,54 +111,94 @@ def unload():
     return {"ok": True, **engine.status()}
 
 
+def _resolve_prompt(
+    voice: Optional[str], upload: Optional[UploadFile], scratch: list[Path], required: bool
+) -> Optional[Path]:
+    """Prefer a per-request upload, else a saved voice id, else the first saved voice."""
+    if upload is not None and upload.filename:
+        suffix = Path(upload.filename).suffix.lower() or ".wav"
+        if suffix not in AUDIO_SUFFIXES:
+            raise HTTPException(400, f"Unsupported audio type '{suffix}'")
+        target = UPLOAD_DIR / f"ref_{uuid.uuid4().hex}{suffix}"
+        with target.open("wb") as handle:
+            shutil.copyfileobj(upload.file, handle)
+        scratch.append(target)
+        return target
+    if voice:
+        candidate = (VOICES_DIR / voice).resolve()
+        if VOICES_DIR.resolve() not in candidate.parents or not candidate.is_file():
+            raise HTTPException(404, f"No such voice '{voice}'")
+        return candidate
+    if not required:
+        return None
+    available = discover_voices()
+    if not available:
+        raise HTTPException(
+            400, "No reference audio: upload one with the request, or POST /api/voices first."
+        )
+    return available[0].path
+
+
 @app.post("/api/tts")
 async def tts(
     text: str = Form(...),
     model: Optional[str] = Form(None),
     tokenizer: Optional[str] = Form(None),
+    # Speaker reference (timbre).
     voice: Optional[str] = Form(None),
     reference: Optional[UploadFile] = File(None),
-    emo_text: Optional[str] = Form(None),
+    # Emotion: 0 = same as speaker prompt, 1 = separate audio, 2 = 8-dim vector,
+    # 3 = text description (experimental).
+    emo_mode: int = Form(0),
+    emo_voice: Optional[str] = Form(None),
+    emo_reference: Optional[UploadFile] = File(None),
     emo_alpha: float = Form(1.0),
+    emo_vector: Optional[str] = Form(None),
+    emo_text: Optional[str] = Form(None),
+    emo_random: bool = Form(False),
+    # Generation.
+    do_sample: bool = Form(True),
     temperature: float = Form(0.8),
     top_p: float = Form(0.8),
     top_k: int = Form(30),
     repetition_penalty: float = Form(10.0),
     num_beams: int = Form(3),
+    length_penalty: float = Form(0.0),
     max_mel_tokens: int = Form(1500),
     max_text_tokens_per_sentence: int = Form(120),
     interval_silence: int = Form(200),
+    duration_seconds: Optional[float] = Form(None),
     seed: Optional[int] = Form(None),
 ):
     """
     Synthesise one utterance.
 
-    The voice reference comes either from an uploaded `reference` file (used for
-    this request only) or from `voice`, an id returned by GET /api/voices.
+    `text` is Mandarin Han characters. A model finetuned on the Taiwanese corpus
+    reads it with Taiwanese pronunciation; do not write Taiwanese Hanji.
+
+    The speaker reference comes from an uploaded `reference` (this request only) or
+    from `voice`, an id from GET /api/voices. Emotion mode 1 uses `emo_reference` /
+    `emo_voice` the same way.
     """
-    temp_upload: Optional[Path] = None
+    scratch: list[Path] = []
     try:
-        if reference is not None and reference.filename:
-            suffix = Path(reference.filename).suffix.lower() or ".wav"
-            if suffix not in AUDIO_SUFFIXES:
-                raise HTTPException(400, f"Unsupported reference audio type '{suffix}'")
-            temp_upload = UPLOAD_DIR / f"ref_{uuid.uuid4().hex}{suffix}"
-            with temp_upload.open("wb") as handle:
-                shutil.copyfileobj(reference.file, handle)
-            prompt_path = temp_upload
-        elif voice:
-            candidate = (VOICES_DIR / voice).resolve()
-            if VOICES_DIR.resolve() not in candidate.parents or not candidate.is_file():
-                raise HTTPException(404, f"No such voice '{voice}'")
-            prompt_path = candidate
-        else:
-            available = discover_voices()
-            if not available:
-                raise HTTPException(
-                    400,
-                    "No reference audio: upload one with the request, or POST /api/voices first.",
-                )
-            prompt_path = available[0].path
+        prompt_path = _resolve_prompt(voice, reference, scratch, required=True)
+        emo_audio_path = None
+        if emo_mode == 1:
+            emo_audio_path = _resolve_prompt(emo_voice, emo_reference, scratch, required=False)
+            if emo_audio_path is None:
+                raise HTTPException(400, "Emotion mode 1 needs emo_reference or emo_voice.")
+
+        parsed_vector = None
+        if emo_mode == 2:
+            if not emo_vector:
+                raise HTTPException(400, "Emotion mode 2 needs emo_vector.")
+            try:
+                parsed_vector = [float(x) for x in json.loads(emo_vector)]
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(400, f"emo_vector must be a JSON array of 8 numbers: {exc}")
+            if len(parsed_vector) != 8:
+                raise HTTPException(400, f"emo_vector needs 8 values, got {len(parsed_vector)}")
 
         try:
             result = engine.synthesize(
@@ -147,16 +206,23 @@ async def tts(
                 model_id=model,
                 tokenizer_id=tokenizer,
                 prompt_path=prompt_path,
-                emo_text=emo_text or None,
+                emo_mode=emo_mode,
+                emo_audio_path=emo_audio_path,
                 emo_alpha=emo_alpha,
+                emo_vector=parsed_vector,
+                emo_text=emo_text or None,
+                emo_random=emo_random,
+                do_sample=do_sample,
                 temperature=temperature,
                 top_p=top_p,
                 top_k=top_k,
                 repetition_penalty=repetition_penalty,
                 num_beams=num_beams,
+                length_penalty=length_penalty,
                 max_mel_tokens=max_mel_tokens,
                 max_text_tokens_per_sentence=max_text_tokens_per_sentence,
                 interval_silence=interval_silence,
+                duration_seconds=duration_seconds,
                 seed=seed,
             )
         except FileNotFoundError as exc:
@@ -172,11 +238,13 @@ async def tts(
                 **result,
                 "url": f"/api/audio/{result['file']}",
                 "reference": prompt_path.name,
+                "emo_reference": emo_audio_path.name if emo_audio_path else None,
             }
         )
     finally:
-        if temp_upload is not None and temp_upload.exists():
-            temp_upload.unlink()
+        for path in scratch:
+            if path.exists():
+                path.unlink()
 
 
 @app.get("/api/audio/{name}")

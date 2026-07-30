@@ -40,3 +40,7 @@ hf_cache/
 *trained_ckpts*
 prompts/
 *.whl
+# local listening samples pulled from the cluster
+/samples_tai8/
+/serve/.env
+/serve/uploads/

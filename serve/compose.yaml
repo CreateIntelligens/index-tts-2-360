@@ -1,0 +1,57 @@
+# Local TTS service. Reuses the repo-root Dockerfile's `runner` stage, so no
+# second image build: the FastAPI stack it needs (fastapi, uvicorn,
+# python-multipart) already arrives with the `webui` extra via gradio.
+#
+#   cd serve && cp .env.example .env && docker compose up --build
+#   -> http://127.0.0.1:8080
+
+services:
+  tts:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: runner
+    image: indextts2-serve:latest
+    restart: unless-stopped
+    gpus: all
+    environment:
+      # Traditional -> Simplified folding must match what preprocessing did,
+      # otherwise a model finetuned on the folded text sees an unfamiliar
+      # distribution. The UI shows this as "T2S on".
+      INDEXTTS_ZH_T2S: "1"
+      INDEXTTS_USE_DEEPSPEED: "0"
+      CHECKPOINTS_DIR: /app/checkpoints
+      MODELS_DIR: /app/models
+      TOKENIZERS_DIR: /app/tokenizers
+      VOICES_DIR: /app/voices
+      OUTPUTS_DIR: /app/outputs
+      UPLOAD_DIR: /app/uploads
+      USE_FP16: "${USE_FP16:-1}"
+      HF_HOME: /app/checkpoints/hf_cache
+      HF_HUB_CACHE: /app/checkpoints/hf_cache
+      PYTHONPATH: /app:/app/serve/app
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes:
+      # Stock weights (config.yaml, gpt.pth, s2mel.pth, bpe.model, ...).
+      - ../checkpoints:/app/checkpoints
+      # Drop finetuned .pth files here; they appear in the model dropdown.
+      - ../models:/app/models
+      # Extended tokenizers (*.model), if you trained any.
+      - ../tokenizers:/app/tokenizers
+      # Saved reference voices and generated audio, kept on the host.
+      - ./voices:/app/voices
+      - ./outputs:/app/outputs
+      # The service code, mounted so edits do not need a rebuild.
+      - ./app:/app/serve/app
+    ports:
+      - "${PORT:-8080}:8000"
+    working_dir: /app/serve/app
+    command: >
+      uvicorn main:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 600
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/api/health')\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s

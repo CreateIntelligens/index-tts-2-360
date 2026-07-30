@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IndexTTS2 · 本機推論</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1e222b;
+    --line: #2b303c;
+    --text: #e6e8ee;
+    --muted: #9aa3b2;
+    --accent: #6ea8fe;
+    --accent-ink: #0b1220;
+    --ok: #4ec9a5;
+    --err: #ff7a7a;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f5f6f8; --panel: #ffffff; --panel-2: #f0f2f5; --line: #dfe3ea;
+      --text: #1a1d24; --muted: #5c6675; --accent: #2f6fdd; --accent-ink: #ffffff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 system-ui, -apple-system, "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+  }
+  header {
+    padding: 18px 24px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: .01em; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  #status { margin-left: auto; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #status b { color: var(--text); font-weight: 600; }
+  main { max-width: 1180px; margin: 0 auto; padding: 22px 24px 60px; display: grid; gap: 18px; grid-template-columns: minmax(0,1.35fr) minmax(0,1fr); }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 0 0 12px; font-weight: 650; }
+  label { display: block; font-size: 12.5px; color: var(--muted); margin: 12px 0 5px; }
+  label:first-of-type { margin-top: 0; }
+  textarea, input, select, button {
+    font: inherit; color: var(--text); background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; width: 100%;
+  }
+  textarea { min-height: 132px; resize: vertical; line-height: 1.6; }
+  input[type=file] { padding: 7px 9px; }
+  select { appearance: none; background-image: none; }
+  button {
+    cursor: pointer; background: var(--accent); color: var(--accent-ink);
+    border: 0; font-weight: 650; padding: 11px 16px;
+  }
+  button:disabled { opacity: .5; cursor: progress; }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); font-weight: 500; }
+  .row { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
+  .row-3 { display: grid; gap: 10px; grid-template-columns: repeat(3, 1fr); }
+  .inline { display: flex; gap: 8px; align-items: center; }
+  .inline > * { width: auto; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  details { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+  summary { cursor: pointer; font-size: 12.5px; color: var(--muted); font-weight: 600; }
+  .results { display: grid; gap: 10px; margin-top: 12px; }
+  .result { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 11px 13px; }
+  .result .meta { font-size: 12px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 7px; }
+  .result .meta .tag { background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 1px 7px; }
+  .result .txt { font-size: 13.5px; margin-bottom: 8px; word-break: break-word; }
+  audio { width: 100%; height: 34px; }
+  .msg { margin-top: 12px; font-size: 13px; padding: 10px 12px; border-radius: 8px; display: none; white-space: pre-wrap; }
+  .msg.show { display: block; }
+  .msg.err { background: color-mix(in srgb, var(--err) 14%, transparent); color: var(--err); border: 1px solid color-mix(in srgb, var(--err) 34%, transparent); }
+  .msg.ok { background: color-mix(in srgb, var(--ok) 13%, transparent); color: var(--ok); border: 1px solid color-mix(in srgb, var(--ok) 32%, transparent); }
+  .note { background: color-mix(in srgb, var(--accent) 10%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent); border-radius: 8px; padding: 10px 12px; font-size: 12.5px; color: var(--text); }
+  code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>IndexTTS2 · 本機推論</h1>
+  <span class="sub">切換模型比對訓練結果</span>
+  <span id="status">載入中…</span>
+</header>
+
+<main>
+  <section class="card">
+    <h2>合成</h2>
+
+    <div class="note">
+      文字請輸入<b>華語漢字</b>（例：<code>你今天吃飽了嗎</code>）。台語模型會用台語發音把它讀出來 —— 不需要、也不應該輸入台文（<code>今仔日</code>、<code>食飽未</code>）。
+    </div>
+
+    <label for="text">文字</label>
+    <textarea id="text" placeholder="請你明天早上來這裡找我">請你明天早上來這裡找我</textarea>
+
+    <div class="row">
+      <div>
+        <label for="model">模型</label>
+        <select id="model"></select>
+      </div>
+      <div>
+        <label for="tokenizer">Tokenizer</label>
+        <select id="tokenizer"></select>
+      </div>
+    </div>
+
+    <label for="voice">參考聲音（決定音色）</label>
+    <div class="inline">
+      <select id="voice" style="flex:1"></select>
+      <button class="ghost" id="refresh" type="button" title="重新掃描">↻</button>
+    </div>
+
+    <label for="upload">或上傳音檔</label>
+    <div class="inline">
+      <input type="file" id="upload" accept="audio/*" style="flex:1">
+      <button class="ghost" id="save-voice" type="button">存為常用</button>
+    </div>
+    <div class="hint">上傳的檔案只用於這次請求；按「存為常用」才會留在清單裡。建議 3–10 秒、乾淨的單人語音。</div>
+
+    <details>
+      <summary>進階參數</summary>
+      <div class="row-3">
+        <div><label for="temperature">temperature</label><input id="temperature" type="number" step="0.05" value="0.8"></div>
+        <div><label for="top_p">top_p</label><input id="top_p" type="number" step="0.05" value="0.8"></div>
+        <div><label for="top_k">top_k</label><input id="top_k" type="number" step="1" value="30"></div>
+      </div>
+      <div class="row-3">
+        <div><label for="repetition_penalty">repetition_penalty</label><input id="repetition_penalty" type="number" step="0.5" value="10"></div>
+        <div><label for="num_beams">num_beams</label><input id="num_beams" type="number" step="1" value="3"></div>
+        <div><label for="seed">seed（留空=隨機）</label><input id="seed" type="number" step="1" placeholder=""></div>
+      </div>
+      <div class="row">
+        <div><label for="emo_text">情感描述（選填）</label><input id="emo_text" type="text" placeholder="開心一點"></div>
+        <div><label for="emo_alpha">emo_alpha</label><input id="emo_alpha" type="number" step="0.1" value="1.0"></div>
+      </div>
+      <div class="hint">未提供 <code>duration_seconds</code>：目前推論端的秒數換算率與實際 semantic token rate 不符（23.4 vs 50 Hz），會產出約一半長度，修好前先不開放。</div>
+    </details>
+
+    <div style="margin-top:16px"><button id="go">生成</button></div>
+    <div class="msg" id="msg"></div>
+  </section>
+
+  <section class="card">
+    <h2>結果</h2>
+    <div class="hint" id="empty">還沒有結果。生成後會累積在這裡，方便同一段文字換模型比對。</div>
+    <div class="results" id="results"></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const msg = (text, kind) => {
+  const el = $('msg');
+  el.textContent = text;
+  el.className = 'msg show ' + (kind || '');
+  if (kind === 'ok') setTimeout(() => { el.className = 'msg'; }, 4000);
+};
+
+function fill(select, items, valueKey, labelFn) {
+  const previous = select.value;
+  select.innerHTML = '';
+  for (const item of items) {
+    const opt = document.createElement('option');
+    opt.value = item[valueKey];
+    opt.textContent = labelFn(item);
+    select.appendChild(opt);
+  }
+  if (previous && items.some(i => i[valueKey] === previous)) select.value = previous;
+}
+
+async function loadStatus() {
+  try {
+    const health = await (await fetch('/api/health')).json();
+    const bits = [];
+    bits.push(health.cuda ? 'CUDA' : 'CPU');
+    if (health.gpu) bits.push(`${health.gpu.free_mb}/${health.gpu.total_mb} MB free`);
+    bits.push(health.loaded ? `已載入 <b>${health.loaded.model}</b>` : '尚未載入模型');
+    bits.push(health.zh_to_simplified ? 'T2S <b>on</b>' : 'T2S <b style="color:var(--err)">off</b>');
+    $('status').innerHTML = bits.join(' · ');
+  } catch (e) {
+    $('status').textContent = '無法連線到後端';
+  }
+}
+
+async function loadLists() {
+  const data = await (await fetch('/api/models')).json();
+  fill($('model'), data.models, 'id', m => m.size_mb ? `${m.label} — ${m.size_mb} MB` : m.label);
+  fill($('tokenizer'), data.tokenizers, 'id', t => t.label);
+  const voices = (await (await fetch('/api/voices')).json()).voices;
+  if (voices.length) {
+    fill($('voice'), voices, 'id', v => v.label);
+  } else {
+    $('voice').innerHTML = '<option value="">（尚無，請上傳）</option>';
+  }
+}
+
+$('refresh').onclick = async () => { await loadLists(); await loadStatus(); msg('已重新掃描', 'ok'); };
+
+$('save-voice').onclick = async () => {
+  const file = $('upload').files[0];
+  if (!file) return msg('請先選擇音檔', 'err');
+  const body = new FormData();
+  body.append('file', file);
+  const res = await fetch('/api/voices', { method: 'POST', body });
+  if (!res.ok) return msg('存檔失敗：' + (await res.text()), 'err');
+  const data = await res.json();
+  $('upload').value = '';
+  await loadLists();
+  $('voice').value = data.saved;
+  msg('已存為常用：' + data.saved, 'ok');
+};
+
+$('go').onclick = async () => {
+  const text = $('text').value.trim();
+  if (!text) return msg('請輸入文字', 'err');
+
+  const body = new FormData();
+  body.append('text', text);
+  body.append('model', $('model').value);
+  body.append('tokenizer', $('tokenizer').value);
+  const file = $('upload').files[0];
+  if (file) body.append('reference', file);
+  else if ($('voice').value) body.append('voice', $('voice').value);
+  for (const key of ['temperature','top_p','top_k','repetition_penalty','num_beams','emo_alpha']) {
+    body.append(key, $(key).value);
+  }
+  if ($('seed').value) body.append('seed', $('seed').value);
+  if ($('emo_text').value.trim()) body.append('emo_text', $('emo_text').value.trim());
+
+  $('go').disabled = true;
+  $('go').textContent = '生成中…';
+  msg('第一次使用某個模型需要載入權重，可能要等一分鐘。', '');
+  try {
+    const res = await fetch('/api/tts', { method: 'POST', body });
+    if (!res.ok) {
+      let detail = await res.text();
+      try { detail = JSON.parse(detail).detail ?? detail; } catch (_) {}
+      throw new Error(detail);
+    }
+    const data = await res.json();
+    addResult(text, data);
+    msg(`完成，耗時 ${data.seconds}s`, 'ok');
+  } catch (e) {
+    msg('生成失敗：' + e.message, 'err');
+  } finally {
+    $('go').disabled = false;
+    $('go').textContent = '生成';
+    loadStatus();
+  }
+};
+
+function addResult(text, data) {
+  $('empty').style.display = 'none';
+  const div = document.createElement('div');
+  div.className = 'result';
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  for (const [k, v] of [['模型', data.model], ['tokenizer', data.tokenizer], ['參考', data.reference], ['耗時', data.seconds + 's']]) {
+    const span = document.createElement('span');
+    span.className = 'tag';
+    span.textContent = `${k}: ${v}`;
+    meta.appendChild(span);
+  }
+  const txt = document.createElement('div');
+  txt.className = 'txt';
+  txt.textContent = text;
+  const audio = document.createElement('audio');
+  audio.controls = true;
+  audio.src = data.url;
+  const dl = document.createElement('a');
+  dl.href = data.url;
+  dl.download = data.file;
+  dl.textContent = '下載 ' + data.file;
+  dl.style.cssText = 'font-size:12px;color:var(--muted)';
+  div.append(meta, txt, audio, dl);
+  $('results').prepend(div);
+}
+
+loadStatus();
+loadLists().catch(e => msg('無法取得模型清單：' + e.message, 'err'));
+setInterval(loadStatus, 15000);
+</script>
+</body>
+</html>

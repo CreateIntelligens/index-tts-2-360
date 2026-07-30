@@ -44,3 +44,6 @@ prompts/
 /samples_tai8/
 /serve/.env
 /serve/uploads/
+
+# working notes, not versioned
+/report/

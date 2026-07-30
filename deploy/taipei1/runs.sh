@@ -23,9 +23,16 @@ printf '%.0s-' {1..126}; echo
 for d in "${dirs[@]}"; do
     name=$(basename "$d")
     cfg="$d/run_config.json"
-    ckpts=$(ls "$d"/model_step*.pth 2>/dev/null | wc -l)
+    # Count with globs, not `ls`: env.sh sets `pipefail`, and an unexpanded glob
+    # makes `ls` exit non-zero, which under `set -e` aborted the whole listing the
+    # moment it reached a version that had no eval/ directory yet.
+    shopt -s nullglob
+    ckpt_files=("$d"/model_step*.pth)
+    eval_files=("$d"/eval/*.wav "$d"/eval/*/*.wav)
+    shopt -u nullglob
+    ckpts=${#ckpt_files[@]}
+    evals=${#eval_files[@]}
     pruned=$([[ -f "$d/pruned/gpt.pth" ]] && echo " pruned" || echo "")
-    evals=$(ls "$d"/eval/*.wav 2>/dev/null | wc -l)
     evaltag=$([[ "$evals" -gt 0 ]] && echo " eval:$evals" || echo "")
 
     if [[ -f "$cfg" ]]; then

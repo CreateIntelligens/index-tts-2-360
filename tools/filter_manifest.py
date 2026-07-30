@@ -27,6 +27,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+from indextts.utils.common import tokenize_by_CJK_char  # noqa: E402
 from indextts.utils.front import TextNormalizer, TextTokenizer  # noqa: E402
 
 
@@ -93,11 +94,26 @@ def main() -> None:
     source_dir = args.manifest.resolve().parent
 
     def char_is_unk(ch: str) -> bool:
-        """Does this single source character survive normalization + vocab lookup?"""
+        """
+        Would this source character contribute an <unk>?
+
+        It has to go through the same path as the drop decision. Looking the raw
+        character up with PieceToId skips the normalizer, which is what made the
+        report blame full-width punctuation: `，` is not in the vocab, but
+        normalize() rewrites it to `,` long before tokenization, so it never
+        actually causes a drop. TextTokenizer.encode() also bypasses the
+        normalizer for single-character input, hence normalising explicitly here.
+        """
         cached = unk_char_cache.get(ch)
         if cached is None:
-            folded = normalizer.to_simplified(ch) if normalizer.zh_to_simplified else ch
-            cached = any(tokenizer.convert_tokens_to_ids(c)[0] == unk_id for c in folded)
+            normalized = normalizer.normalize(ch, language=args.language) if normalizer else ch
+            if not normalized.strip():
+                cached = False  # normalization removed it; harmless
+            else:
+                pieces = tokenizer.sp_model.Encode(
+                    tokenize_by_CJK_char(normalized), out_type=int
+                )
+                cached = any(p == unk_id for p in pieces)
             unk_char_cache[ch] = cached
         return cached
 

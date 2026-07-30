@@ -57,10 +57,24 @@ fi
 OUT_DIR=$RUN_DIR/eval
 mkdir -p "$OUT_DIR"
 
-# Fall back to a well-aligned training clip so the script runs with no arguments.
-# Selecting purely by duration would land on the corpus's worst tail: the clips
-# over 10s average 0.67 characters per second, i.e. mostly audio the transcript
-# does not cover, which skews the generated speaking rate.
+# With no PROMPT_WAV, prefer the curated clips in $REFS: they are already
+# length- and alignment-checked, and unlike the corpus they do not depend on the
+# dataset mount staying readable (tai8's permissions have gone away once already
+# mid-project).
+if [[ -z "$PROMPT_WAV" ]]; then
+    for candidate in "$REFS"/ref_drama1_020_*.wav "$REFS"/*.wav; do
+        if [[ -r "$candidate" ]]; then
+            PROMPT_WAV=$candidate
+            echo "=== using curated reference: $(basename "$PROMPT_WAV") ==="
+            break
+        fi
+    done
+fi
+
+# Otherwise fall back to a well-aligned training clip. Selecting purely by
+# duration would land on the corpus's worst tail: the clips over 10s average 0.67
+# characters per second, i.e. mostly audio the transcript does not cover, which
+# skews the generated speaking rate.
 if [[ -z "$PROMPT_WAV" ]]; then
     PROMPT_WAV=$(python - <<'PY'
 import json, os, re

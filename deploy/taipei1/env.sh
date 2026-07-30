@@ -9,6 +9,7 @@ export REPO=$ROOT/repo
 export CKPT=$ROOT/checkpoints
 export WORK=$ROOT/work
 export LOGS=$ROOT/logs
+export REFS=$ROOT/refs
 export IMAGE=$ROOT/images/indextts2-vllm.sqsh
 export DATASET=/mnt/shared/p06/dataset202607_1
 

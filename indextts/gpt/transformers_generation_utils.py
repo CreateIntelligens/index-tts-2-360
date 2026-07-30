@@ -1047,7 +1047,9 @@ class GenerationMixin:
                     device=device,
                 )
             )
-        if generation_config.forced_decoder_ids is not None:
+        # `forced_decoder_ids` was removed from GenerationConfig upstream, so read
+        # it defensively: on newer transformers the field simply cannot be set.
+        if getattr(generation_config, "forced_decoder_ids", None) is not None:
             # TODO (sanchit): move this exception to GenerationConfig.validate() when TF & FLAX are aligned with PT
             raise ValueError(
                 "You have explicitly specified `forced_decoder_ids`. Please remove the `forced_decoder_ids` argument "
@@ -1530,7 +1532,11 @@ class GenerationMixin:
             if (
                 not is_torchdynamo_compiling()
                 and self.generation_config._from_model_config  # 1)
-                and self.generation_config._original_object_hash == hash(self.generation_config)  # 2)
+                # `_original_object_hash` also disappeared upstream; without it we
+                # cannot tell whether the config was modified, so skip the legacy
+                # migration path rather than crash.
+                and getattr(self.generation_config, "_original_object_hash", None)
+                == hash(self.generation_config)  # 2)
                 and len(self.config._get_non_default_generation_parameters()) > 0  # 3)
             ):
                 new_generation_config = GenerationConfig.from_model_config(self.config)

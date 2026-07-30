@@ -216,12 +216,11 @@
           </div>
           <div class="hint">留空也會回報實際使用的 seed；點結果上的 seed 標籤可帶回來重現。</div>
         </div>
-        <div><label for="duration_seconds">目標長度（秒，留空=不指定）</label><input id="duration_seconds" type="number" step="0.5" min="0" placeholder=""></div>
       </div>
       <div class="warn">
-        <b>目標長度目前不會生效。</b>IndexTTS2 的長度控制需要模型以 <code>--use-duration-control</code> 訓練，
-        base 與目前的 v1/v2 都沒有（官方 README 也標註此功能尚未啟用）。換算率的 bug 已修（23.4 → 50 Hz），
-        留這個欄位是為了之後訓練出支援的模型時可以直接用。<b>想調語速請換參考音檔。</b>
+        <b>沒有語速控制。</b>IndexTTS2 的長度控制需要模型以 <code>--use-duration-control</code> 訓練，
+        base 與 v1/v2 都沒有（官方 README 也標註此功能尚未啟用）。
+        <b>語速由參考音檔決定</b> —— 想慢一點就挑講話慢的參考音檔。
       </div>
       <div style="margin-top:10px"><button class="ghost sm" id="reset-params" type="button">回復預設值</button></div>
     </details>
@@ -291,7 +290,7 @@ $('reset-params').onclick = () => {
     const el = $(k);
     if (el.type === 'checkbox') el.checked = v; else el.value = v;
   }
-  $('seed').value = ''; $('duration_seconds').value = '';
+  $('seed').value = '';
   $('emo-alpha').value = 1; $('emo-alpha-v').textContent = '1.00';
   EMO_LABELS.forEach((_, i) => { $('vec' + i).value = 0; });
   refreshVecSum();
@@ -430,7 +429,6 @@ $('go').onclick = async () => {
     body.append(k, $(k).value);
   }
   if ($('seed').value) body.append('seed', $('seed').value);
-  if ($('duration_seconds').value) body.append('duration_seconds', $('duration_seconds').value);
 
   $('go').disabled = true; $('go').textContent = '生成中…';
   msg('第一次使用某個模型需要載入權重，可能要等一分鐘。', '');

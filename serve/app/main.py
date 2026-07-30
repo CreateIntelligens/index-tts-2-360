@@ -20,6 +20,7 @@ from typing import Optional
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from engine import (
     AUDIO_SUFFIXES,
@@ -167,7 +168,6 @@ async def tts(
     max_mel_tokens: int = Form(1500),
     max_text_tokens_per_sentence: int = Form(120),
     interval_silence: int = Form(200),
-    duration_seconds: Optional[float] = Form(None),
     seed: Optional[int] = Form(None),
 ):
     """
@@ -201,7 +201,12 @@ async def tts(
                 raise HTTPException(400, f"emo_vector needs 8 values, got {len(parsed_vector)}")
 
         try:
-            result = engine.synthesize(
+            # Synthesis is a long blocking GPU call. Running it directly inside an
+            # async endpoint pins the event loop, so every other request — including
+            # GET /api/audio for already-finished takes — stalls until it returns,
+            # then they all complete at once. Hand it to a worker thread instead.
+            result = await run_in_threadpool(
+                engine.synthesize,
                 text,
                 model_id=model,
                 tokenizer_id=tokenizer,
@@ -222,7 +227,6 @@ async def tts(
                 max_mel_tokens=max_mel_tokens,
                 max_text_tokens_per_sentence=max_text_tokens_per_sentence,
                 interval_silence=interval_silence,
-                duration_seconds=duration_seconds,
                 seed=seed,
             )
         except FileNotFoundError as exc:

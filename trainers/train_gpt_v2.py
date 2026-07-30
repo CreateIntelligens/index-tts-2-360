@@ -93,6 +93,18 @@ def parse_args() -> argparse.Namespace:
         default=0.3,
         help="Probability of zeroing duration embeddings when --use-duration-control is enabled.",
     )
+    parser.add_argument(
+        "--emotion-source",
+        choices=("target", "prompt"),
+        default="target",
+        help=(
+            "Which side of a pair supplies the emotion vector. 'target' (default) keeps "
+            "the vector informative so the model actually learns to use emotion "
+            "conditioning. 'prompt' reproduces the earlier behaviour, where the vector "
+            "came from a randomly chosen other clip and the model learned to ignore it "
+            "and read emotion off the text instead."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=1234, help="Random seed.")
     parser.add_argument(
         "--ddp-backend",
@@ -273,7 +285,8 @@ class Sample:
 
 
 class JapaneseGPTDataset(Dataset):
-    def __init__(self, manifests: Sequence[ManifestSpec]):
+    def __init__(self, manifests: Sequence[ManifestSpec], emotion_source: str = "target"):
+        self.emotion_source = emotion_source
         if isinstance(manifests, ManifestSpec):
             manifests = [manifests]
         manifest_list = list(manifests)
@@ -335,10 +348,25 @@ class JapaneseGPTDataset(Dataset):
                 processed += 1
                 is_paired = "prompt_condition_path" in record and "target_codes_path" in record
                 if is_paired:
-                    emo_path_value = record.get("prompt_emo_vec_path") or record.get("target_emo_vec_path")
+                    # Emotion has to come from the target by default. The prompt is a
+                    # *randomly chosen* other clip of the same speaker, so its emotion is
+                    # uncorrelated with the target's prosody: the vector then carries no
+                    # predictive signal and the model learns to ignore emotion
+                    # conditioning altogether, inferring prosody from the text instead.
+                    # Speaker identity does not suffer the same way, because the prompt is
+                    # the same speaker and the timbre latent stays informative.
+                    if self.emotion_source == "prompt":
+                        emo_path_value = record.get("prompt_emo_vec_path") or record.get(
+                            "target_emo_vec_path"
+                        )
+                    else:
+                        emo_path_value = record.get("target_emo_vec_path") or record.get(
+                            "prompt_emo_vec_path"
+                        )
                     if not emo_path_value:
                         raise RuntimeError(
-                            f"Paired manifest entry {record.get('id')} missing prompt_emo_vec_path."
+                            f"Paired manifest entry {record.get('id')} has neither "
+                            "target_emo_vec_path nor prompt_emo_vec_path."
                         )
                     target_language = self._normalize_language(
                         record.get("target_language") or record.get("language") or spec.language
@@ -861,10 +889,11 @@ def main() -> None:
     train_specs = parse_manifest_specs(args.train_manifests, "--train-manifest")
     val_specs = parse_manifest_specs(args.val_manifests, "--val-manifest")
 
+    log(f"[Info] Emotion vector source: {args.emotion_source}")
     log("[Info] Loading training manifests...")
-    train_dataset = JapaneseGPTDataset(train_specs)
+    train_dataset = JapaneseGPTDataset(train_specs, emotion_source=args.emotion_source)
     log("[Info] Loading validation manifests...")
-    val_dataset = JapaneseGPTDataset(val_specs)
+    val_dataset = JapaneseGPTDataset(val_specs, emotion_source=args.emotion_source)
 
     manifest_metadata = {
         "train": [

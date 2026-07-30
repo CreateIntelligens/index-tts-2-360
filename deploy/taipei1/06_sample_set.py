@@ -34,22 +34,49 @@ SENTENCES = [
 ]
 
 
+HAN = re.compile(r"[一-鿿]")
+
+# The prompt sets timbre *and* prosody, so it has to be a well-aligned clip.
+# Picking purely by duration lands on the corpus's worst tail: the 31 clips over
+# 10s average 0.67 characters per second, i.e. mostly audio the transcript does
+# not cover, which then skews the generated speaking rate.
+MIN_PROMPT_S, MAX_PROMPT_S = 3.0, 8.0
+MIN_RATE, MAX_RATE = 4.0, 6.5  # corpus median is 5.2 characters per second
+
+
 def pick_prompt() -> str:
-    """Longest clip from a training speaker, so the timbre reference is solid."""
+    """Longest *well-aligned* clip: long enough for timbre, sane speaking rate."""
     manifest = WORK / "shards/shard0/train_manifest.jsonl"
-    best = None
+    candidates = []
+    fallback = None
     with manifest.open(encoding="utf-8") as handle:
         for i, line in enumerate(handle):
-            if i > 20000:
+            if i > 40000:
                 break
             record = json.loads(line)
-            if best is None or (record.get("duration") or 0) > (best.get("duration") or 0):
-                best = record
-    if best is None:
+            duration = record.get("duration") or 0.0
+            chars = len(HAN.findall(record.get("text", "")))
+            if not duration or not chars:
+                continue
+            rate = chars / duration
+            if fallback is None or duration > (fallback.get("duration") or 0):
+                fallback = record
+            if MIN_PROMPT_S <= duration <= MAX_PROMPT_S and MIN_RATE <= rate <= MAX_RATE:
+                candidates.append((duration, rate, record))
+
+    if candidates:
+        candidates.sort(key=lambda item: -item[0])
+        duration, rate, best = candidates[0]
+        print(f"prompt: {best['audio']}")
+        print(f"  {duration:.2f}s, {rate:.2f} chars/s, speaker {best['speaker']}")
+        print(f"  transcript: {best.get('text','')}")
+        print(f"  ({len(candidates):,} clips met the alignment filter)")
+        return best["audio"]
+
+    if fallback is None:
         sys.exit(f"no usable prompt in {manifest}")
-    print(f"prompt: {best['audio']}  ({best['duration']:.2f}s, speaker {best['speaker']})")
-    print(f"prompt transcript: {best.get('text','')}")
-    return best["audio"]
+    print(f"[Warn] no well-aligned clip found; falling back to {fallback['audio']}")
+    return fallback["audio"]
 
 
 def main() -> None:

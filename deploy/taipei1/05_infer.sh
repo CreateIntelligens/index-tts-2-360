@@ -3,7 +3,12 @@
 #
 #   CKPT_PTH=/mnt/shared/p06/indextts2/runs/tai8_v1/model_step23560.pth \
 #   PROMPT_WAV=/path/to/reference.wav \
-#   TEXT='你今仔日食飽未' \
+#   TEXT='你今天吃飽了嗎' \
+#
+# TEXT is written in *Mandarin* Han characters, the same way the training
+# transcripts were. The model learns the mapping from Mandarin orthography to
+# Taiwanese pronunciation, so there is no need — and no reason — to write
+# Taiwanese Hanji (今仔日, 食飽未) on the input side.
 #   srun --ntasks=1 -p p06 --gres=gpu:h100:1 \
 #     --container-image $ROOT/images/indextts2-vllm.sqsh \
 #     --container-mounts /mnt/shared/p06:/mnt/shared/p06 \
@@ -19,7 +24,7 @@ cd "$REPO"
 
 CKPT_PTH=${CKPT_PTH:-$ROOT/runs/tai8_v1/model_step23560.pth}
 OUT_DIR=${OUT_DIR:-$ROOT/outputs}
-TEXT=${TEXT:-請你明仔載早起來這裡找我}
+TEXT=${TEXT:-請你明天早上來這裡找我}
 PROMPT_WAV=${PROMPT_WAV:-}
 
 mkdir -p "$OUT_DIR"

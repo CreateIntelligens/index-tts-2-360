@@ -36,11 +36,20 @@ DEFAULT_MANIFESTS = [
     "/mnt/nas/dataset202607_1/tai8/manifests/index_tts/train_manifest.jsonl",
 ]
 
-# Thresholds. The word figures come from what the corpus actually supports:
-# 今天 (2,124) is reliable, 明天 (210) is not, so "hundreds" is not enough.
+# Thresholds, from listening results rather than guesswork. In
+# 「今天各地天氣多雲到晴」only 今天 came out right:
+#
+#   今天 2,124  correct        天氣  110  wrong
+#   各地     1  wrong          多雲    0  wrong
+#
+# 天氣 is the informative one: both characters are very common (天 6,197,
+# 氣 2,193) yet the word fails at 110. Character coverage is necessary but not
+# sufficient — the Mandarin-word-to-Taiwanese-word mapping is what has to be
+# learned, and it needs the *word* to recur. The reliable threshold is somewhere
+# between 110 and 2,124 and has not been bracketed yet.
 CHAR_RARE = 50
-WORD_WEAK = 150
-WORD_SOLID = 1000
+WORD_WEAK = 150      # 天氣 (110) demonstrably fails
+WORD_SOLID = 1500    # 今天 (2,124) demonstrably works; true floor is lower
 
 
 def parse_args() -> argparse.Namespace:
@@ -119,17 +128,22 @@ def score(text: str, chars, grams, max_len: int, top: int) -> None:
         print(f"    字對證據薄弱 (<{WORD_WEAK}): {'  '.join(f'{g}({c})' for g, c in thin[:top])}")
         print("      （跨詞邊界的字對本來就少，這欄要自己判斷哪些是真的詞）")
 
-    # The verdict keys off characters: an unseen character has no Taiwanese
-    # evidence at all, which is the one failure mode that is certain.
+    # Word evidence drives the verdict. Characters alone were too optimistic:
+    # 天氣 has two very common characters and still comes out wrong at 110
+    # occurrences, so a text can be 0% risky by character and still mispronounce
+    # most of its words.
     unseen_ratio = len(unseen) / len(cs)
+    weak_words = [g for g, c in thin]
     if unseen_ratio > 0.05:
-        verdict = "高風險 — 預期大量退回華語"
+        verdict = "高風險 — 未見字太多，預期大量退回華語"
     elif unseen:
-        verdict = "中高風險 — 未見字附近會出錯"
+        verdict = "中高風險 — 未見字附近必錯"
+    elif len(absent) + len(weak_words) > len(cs) / 4:
+        verdict = "中高風險 — 多數詞證據不足，預期普遍讀錯"
+    elif absent or weak_words:
+        verdict = "中風險 — 個別詞會讀錯"
     elif rare:
-        verdict = "中風險 — 低頻字可能出錯"
-    elif absent:
-        verdict = "低-中風險 — 字都夠常見，但有沒見過的詞"
+        verdict = "低-中風險"
     else:
         verdict = "低風險"
     print(f"    → {verdict}")

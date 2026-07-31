@@ -179,18 +179,26 @@
       <div class="warn">官方標註為<b>實驗性功能</b>，由 Qwen 模型把描述轉成情感向量，結果不一定穩定。</div>
     </div>
 
-    <div class="slider" style="margin-top:12px">
-      <div style="flex:1">
-        <label for="emo-alpha" style="margin:0">情感強度 emo_alpha</label>
-        <input type="range" id="emo-alpha" min="0" max="1.5" step="0.05" value="0.5">
+    <div id="alpha-box" style="margin-top:12px">
+      <div class="slider">
+        <div style="flex:1">
+          <label for="emo-alpha" style="margin:0">情感強度 emo_alpha</label>
+          <input type="range" id="emo-alpha" min="0" max="1.5" step="0.05" value="0.5">
+        </div>
+        <output id="emo-alpha-v">0.50</output>
       </div>
-      <output id="emo-alpha-v">0.50</output>
+      <div class="hint">
+        <code>out = 本身情感 + alpha × (參考情感 − 本身情感)</code><br>
+        <b>alpha=1.0 不是各半，而是「完全採用情感參考」</b> —— 說話者自己的情感成分歸零，
+        而情感向量是加在音色 latent 上的，所以音色會一起被帶走。0 = 完全不受影響。
+        預設 0.5 是折衷；想找「保住音色又換情緒」的點，掃 0.4–0.8。
+      </div>
     </div>
-    <div class="hint">
-      <code>out = 本身情感 + alpha × (參考情感 − 本身情感)</code><br>
-      <b>alpha=1.0 不是各半，而是「完全採用情感參考」</b> —— 說話者自己的情感成分歸零，
-      而情感向量是加在音色 latent 上的，所以音色會一起被帶走。0 = 完全不受影響。
-      預設 0.5 是折衷；想找「保住音色又換情緒」的點，掃 0.4–0.8。
+    <div id="alpha-na" class="warn" style="display:none">
+      <b>此模式下 emo_alpha 不生效。</b>infer_v2_modded.py 在情感向量／情感文字／
+      「與音色參考相同」三種模式下會把 alpha 強制覆蓋成 1.0，所以拉動它不會有任何差別。
+      情感向量模式的強度是由<b>八維總和</b>控制（上限 1.5）。
+      只有「情感參考音檔」模式會用到 alpha。
     </div>
 
     <details>
@@ -287,7 +295,16 @@ $('emo-tabs').addEventListener('click', e => {
   emoMode = parseInt(btn.dataset.mode, 10);
   document.querySelectorAll('#emo-tabs button').forEach(b => b.classList.toggle('on', b === btn));
   document.querySelectorAll('.grp[data-mode]').forEach(g => g.classList.toggle('on', +g.dataset.mode === emoMode));
+  syncAlphaVisibility();
 });
+
+// alpha is only consulted in mode 1; the inference code overwrites it with 1.0
+// in every other mode, so showing a live slider there would be a lie.
+function syncAlphaVisibility() {
+  $('alpha-box').style.display = emoMode === 1 ? '' : 'none';
+  $('alpha-na').style.display = emoMode === 1 ? 'none' : '';
+}
+syncAlphaVisibility();
 
 $('clear-seed').onclick = () => { $('seed').value = ''; msg('seed 已清空，下次隨機', 'ok'); };
 

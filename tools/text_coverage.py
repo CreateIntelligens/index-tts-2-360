@@ -109,43 +109,46 @@ def score(text: str, chars, grams, max_len: int, top: int) -> None:
         shown = sorted(set(rare), key=lambda x: x[1])[:top]
         print(f"    低頻字: {'  '.join(f'{c}({v})' for c, v in shown)}")
 
-    # Bigrams, not longest-match. Longest-match reported junk like 你不要再(182)
-    # — a 4-gram that happens to recur — instead of the two-character units that
-    # actually carry the Mandarin-word-to-Taiwanese-word mapping. Some bigrams
-    # straddle a word boundary and are legitimately rare, so this is a weaker
-    # signal than the character counts and is reported, not scored.
-    bigrams = []
-    for run in HAN_RUN.findall(text):
-        for i in range(len(run) - 1):
-            g = run[i : i + 2]
-            bigrams.append((g, grams[g]))
+    # Segment into real words. Scoring raw bigrams flagged boundary pairs like
+    # 錢藏 / 道所 / 再騙 as risks and rated the drama sentence — confirmed almost
+    # entirely correct by ear — as badly as the weather one. jieba gives the units
+    # that actually carry the Mandarin-word-to-Taiwanese-word mapping.
+    import jieba
 
-    absent = sorted({g for g, c in bigrams if c == 0})
-    thin = sorted({g: c for g, c in bigrams if 0 < c < WORD_WEAK}.items(), key=lambda x: x[1])
+    words = [w for w in jieba.cut(text) if len(HAN.findall(w)) == len(w) and len(w) >= 2]
+    scored = [(w, grams[w]) for w in words]
+    absent = sorted({w for w, c in scored if c == 0})
+    thin = sorted({w: c for w, c in scored if 0 < c < WORD_WEAK}.items(), key=lambda x: x[1])
+    mid = sorted({w: c for w, c in scored if WORD_WEAK <= c < WORD_SOLID}.items(), key=lambda x: x[1])
+    solid = [w for w, c in scored if c >= WORD_SOLID]
+
+    if scored:
+        print(f"    斷詞 {len(scored)} 個多字詞：未見 {len(absent)}  <{WORD_WEAK} {len(thin)}"
+              f"  <{WORD_SOLID} {len(mid)}  >={WORD_SOLID} {len(solid)}")
     if absent:
-        print(f"    從未同時出現的字對 ({len(absent)}): {'  '.join(absent[:top])}")
+        print(f"      語料沒有: {'  '.join(absent[:top])}")
     if thin:
-        print(f"    字對證據薄弱 (<{WORD_WEAK}): {'  '.join(f'{g}({c})' for g, c in thin[:top])}")
-        print("      （跨詞邊界的字對本來就少，這欄要自己判斷哪些是真的詞）")
+        print(f"      證據不足: {'  '.join(f'{w}({c})' for w, c in thin[:top])}")
+    if mid:
+        print(f"      證據中等: {'  '.join(f'{w}({c})' for w, c in mid[:top])}")
 
-    # Word evidence drives the verdict. Characters alone were too optimistic:
-    # 天氣 has two very common characters and still comes out wrong at 110
-    # occurrences, so a text can be 0% risky by character and still mispronounce
-    # most of its words.
+    # Verdict from the real words. 天氣 (110 in the full corpus, 84 in what v3b
+    # saw) is mispronounced while 今天 (2,124) is not, so anything under WORD_WEAK
+    # is treated as expected-wrong.
+    at_risk = len(absent) + len(thin)
     unseen_ratio = len(unseen) / len(cs)
-    weak_words = [g for g, c in thin]
     if unseen_ratio > 0.05:
         verdict = "高風險 — 未見字太多，預期大量退回華語"
-    elif unseen:
-        verdict = "中高風險 — 未見字附近必錯"
-    elif len(absent) + len(weak_words) > len(cs) / 4:
-        verdict = "中高風險 — 多數詞證據不足，預期普遍讀錯"
-    elif absent or weak_words:
-        verdict = "中風險 — 個別詞會讀錯"
-    elif rare:
-        verdict = "低-中風險"
-    else:
+    elif not scored:
+        verdict = "無法判斷（沒有多字詞）"
+    elif at_risk == 0:
         verdict = "低風險"
+    elif at_risk / len(scored) > 0.5:
+        verdict = "高風險 — 過半的詞證據不足，預期普遍讀錯"
+    elif unseen:
+        verdict = "中高風險 — 有未見字，且部分詞證據不足"
+    else:
+        verdict = f"中風險 — {at_risk}/{len(scored)} 個詞證據不足，那幾個會讀錯"
     print(f"    → {verdict}")
 
 

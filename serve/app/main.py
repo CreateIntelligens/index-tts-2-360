@@ -153,7 +153,7 @@ async def tts(
     emo_mode: int = Form(0),
     emo_voice: Optional[str] = Form(None),
     emo_reference: Optional[UploadFile] = File(None),
-    emo_alpha: float = Form(1.0),
+    emo_alpha: float = Form(0.5),
     emo_vector: Optional[str] = Form(None),
     emo_text: Optional[str] = Form(None),
     emo_random: bool = Form(False),

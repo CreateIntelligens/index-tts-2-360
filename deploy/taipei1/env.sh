@@ -4,6 +4,14 @@
 
 set -euo pipefail
 
+# The Slurm clients live in /cm/local/apps/slurm/current/bin and are not on the
+# default PATH; without this, sbatch/squeue/sinfo are simply "command not found"
+# on the login node. Harmless inside the container, where there is no module
+# command and no need for one.
+if ! command -v sbatch >/dev/null 2>&1 && command -v module >/dev/null 2>&1; then
+    module load slurm 2>/dev/null || true
+fi
+
 export ROOT=/mnt/shared/p06/indextts2
 export REPO=$ROOT/repo
 export CKPT=$ROOT/checkpoints

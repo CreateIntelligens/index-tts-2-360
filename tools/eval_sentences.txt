@@ -1,0 +1,68 @@
+# The benchmark asr_eval.py reads. One line per probe: domain<TAB>text.
+#
+# Fifty sentences split across the three target domains, because a ranking is
+# only as meaningful as what it was measured on. The earlier six-sentence probe
+# could not separate the top checkpoints — the spread between models was 0.118
+# against a standard error of 0.058 — and half of that noise came from a single
+# sentence, "今天各地天氣多雲到晴", whose key words appear zero times in the
+# corpus and which every model therefore garbles differently.
+#
+# Sentences are kept to roughly 10-30 characters. The splitter cuts at 120 BPE
+# tokens, so staying under that keeps each take a single pass with no sentence
+# joins, which is a separate problem measured separately.
+#
+# Vocabulary is deliberately mixed: some of these words the corpus has hundreds
+# of examples of, some it has none. That is the point — the failure being
+# tracked is word coverage, so a benchmark of only well-covered words would
+# report a score that improves with nothing.
+
+日常對話	你不要再騙我了，我已經知道所有的事情
+日常對話	我今天看到外面的天氣
+日常對話	我剛才有看到他們
+日常對話	你吃飽了沒，要不要再添一碗
+日常對話	這件事情我會處理，你不用擔心
+日常對話	阿嬤叫我們早點回家吃飯
+日常對話	昨天晚上我睡不著，一直想這件事
+日常對話	你什麼時候要去醫院看爸爸
+日常對話	錢的事情我來想辦法，你先休息
+日常對話	他們兩個從小就認識，感情很好
+日常對話	我明天要去市場買菜，你要什麼
+日常對話	這個孩子很聰明，讀書都不用人家教
+日常對話	你講話小聲一點，隔壁在睡覺
+日常對話	我跟你說過多少次了，做事情要用心
+日常對話	天氣這麼熱，記得多喝水
+日常對話	這條路我走了幾十年，閉著眼睛都會走
+日常對話	你放心，我一定會把事情做好
+新聞播報	今天各地天氣多雲到晴
+新聞播報	中央氣象署今天上午發布颱風警報
+新聞播報	行政院今天召開記者會說明最新政策
+新聞播報	這次的降雨量突破歷年同期紀錄
+新聞播報	警方已經逮捕三名嫌犯
+新聞播報	股市今天收盤下跌一百二十點
+新聞播報	教育部宣布下學期開始實施新制度
+新聞播報	高速公路南下路段目前車流量大
+新聞播報	衛生福利部提醒民眾注意流感疫情
+新聞播報	本次地震規模五點二，震央在花蓮外海
+新聞播報	台電表示今天用電量創下新高
+新聞播報	縣市政府已經啟動防災應變中心
+新聞播報	這起事故造成兩人輕傷送醫
+新聞播報	農委會預估今年稻米產量將會增加
+新聞播報	捷運系統將於下個月延長營運時間
+新聞播報	消費者物價指數較去年同期上漲百分之二
+新聞播報	外交部發表聲明表示嚴正抗議
+文言文說故事	東漢末年，天下大亂
+文言文說故事	話說當年，有一位員外住在城南
+文言文說故事	那時候的人相信，山中住著神仙
+文言文說故事	他一生行善積德，鄉里都很敬重他
+文言文說故事	老翁撫鬚而笑，說出了其中的道理
+文言文說故事	三國時期，群雄並起，各據一方
+文言文說故事	相傳這座橋是唐朝時候建造的
+文言文說故事	書生連夜趕路，來到一座破廟前
+文言文說故事	皇帝聽了大臣的話，龍顏大怒
+文言文說故事	這個故事流傳了幾百年，至今仍為人津津樂道
+文言文說故事	從前有個樵夫，每天上山砍柴為生
+文言文說故事	他拱手作揖，向前來的客人行禮
+文言文說故事	少年立志讀書，日後果然功成名就
+文言文說故事	江湖上的恩怨，往往一句話就能了結
+文言文說故事	那年冬天，大雪封山，村裡糧食吃盡
+文言文說故事	天色漸暗，遠處傳來陣陣鐘聲

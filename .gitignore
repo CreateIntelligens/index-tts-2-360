@@ -48,3 +48,8 @@ prompts/
 # working notes, not versioned
 /report/
 samples_itts15/
+samples_v5_asr/
+# Regenerable intermediates. trainset.jsonl carries SuíSiann text, which is
+# CC BY-SA — redistributing it here would pull the ShareAlike terms onto this
+# repo, and tools/build_tailo_trainset.py rebuilds it from the source anyway.
+/work/

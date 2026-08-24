@@ -37,6 +37,7 @@ import os
 import random
 import re
 import sys
+import tempfile
 import time
 from concurrent.futures import ProcessPoolExecutor
 
@@ -48,10 +49,10 @@ from torch.utils.data import DataLoader, Dataset
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from indextts.s2mel.modules.campplus.DTDNN import CAMPPlus  # noqa: E402
 
-SP = os.environ.get(
-    "SCRATCH",
-    "/tmp/claude-1000/-home-hank-index-tts-2-360/de1d5f9f-02c2-4f53-b990-c4d1bdda0f21/scratchpad",
-)
+# Intermediates only — the index and the npz are both rebuildable, so a temp
+# directory is the right home for them. Set SCRATCH to keep them somewhere else.
+SP = os.environ.get("SCRATCH", os.path.join(tempfile.gettempdir(), "indextts_pair_filter"))
+os.makedirs(SP, exist_ok=True)
 TAI8 = os.environ.get("TAI8_MANIFESTS", "/mnt/nas/dataset202607_1/tai8/manifests/index_tts")
 AUTO_ROOT = os.environ.get("AUTO_ROOT", "/mnt/nas/ml-material/segment_data/output/drama1")
 AUTO_INDEX = os.environ.get("AUTO_INDEX", f"{SP}/seg_drama1.txt")
